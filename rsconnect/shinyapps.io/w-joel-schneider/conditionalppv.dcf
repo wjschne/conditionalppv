@@ -1,0 +1,13 @@
+name: conditionalppv
+title: conditionalppv
+username:
+account: w-joel-schneider
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4284652
+bundleId: 4728984
+url: https://w-joel-schneider.shinyapps.io/conditionalppv/
+when: 1623970705.10123
+lastSyncTime: 1623970705.10123
+asMultiple: FALSE
+asStatic: FALSE
