@@ -13,7 +13,6 @@ library(showtext)
 library(thematic)
 library(bslib)
 library(Cairo)
-library(showtext)
 library(viridis)
 library(patchwork)
 
@@ -1103,7 +1102,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
     plot = gp,
     model = paste0('
 <?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="376.93pt" height="237pt" viewBox="0 0 376.93 237" version="1.1">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="0 0 376.93 237" version="1.1">
 	<style>
 		.latent {fill:white; font-size:20pt; font-style:italic; }
 		.observed {fill:white; font-size:20pt; font-style:normal; }
