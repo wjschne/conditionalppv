@@ -46,6 +46,50 @@ proportion_round <- function(p, digits = 2) {
     p1
 }
 
+prob_label <- function(p,
+                       accuracy = 0.01,
+                       digits = NULL,
+                       max_digits = NULL,
+                       remove_leading_zero = TRUE,
+                       round_zero_one = TRUE) {
+  if (is.null(digits)) {
+    l <- scales::number(p, accuracy = accuracy)
+  } else {
+    sig_digits <- abs(ceiling(log10(p + p / 1000000000)) - digits)
+    sig_digits[p > 0.99] <- abs(ceiling(log10(1 - p[p > 0.99])) - digits + 1)
+    sig_digits[ceiling(log10(p)) == log10(p)] <- sig_digits[ceiling(log10(p)) == log10(p)] - 1
+    sig_digits[is.infinite(sig_digits)] <- 0
+    l <- purrr::map2_chr(p,
+                         sig_digits,
+                         formatC,
+                         format = "f",
+                         flag = "#")
+
+  }
+  if (remove_leading_zero) l <- sub("^-0","-", sub("^0","", l))
+
+  if (round_zero_one) {
+    l[p == 0] <- "0"
+    l[p == 1] <- "1"
+    l[p == -1] <- "-1"
+  }
+
+  if (!is.null(max_digits)) {
+    if (round_zero_one) {
+      l[round(p, digits = max_digits) == 0] <- "0"
+      l[round(p, digits = max_digits) == 1] <- "1"
+      l[round(p, digits = max_digits) == -1] <- "-1"
+    } else {
+      l[round(p, digits = max_digits) == 0] <- paste0(".", paste0(rep("0", max_digits), collapse = ""))
+      l[round(p, digits = max_digits) == 1] <- paste0("1.", paste0(rep("0", max_digits), collapse = ""))
+      l[round(p, digits = max_digits) == -1] <- paste0("-1.", paste0(rep("0", max_digits), collapse = ""))
+    }
+  }
+
+  dim(l) <- dim(p)
+  l
+}
+
 # Makes geom_text size the same as the base size
 # (scaled to the specified ratio)
 ggtext_size <- function(base_size, ratio = 0.8) {
@@ -629,7 +673,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         "P(*",symbol,"* < ",
         threshold,
         ") = ",
-        WJSmisc::prob_label(pnorm(threshold, mu, sd),
+        prob_label(pnorm(threshold, mu, sd),
                             digits = 2,
                             max_digits = 4,
                             round_zero_one = F)
@@ -642,7 +686,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         "P(*",symbol,"* > ",
         threshold + buffer,
         ") = ",
-        WJSmisc::prob_label(1 - pnorm(threshold + buffer, mu, sd),
+        prob_label(1 - pnorm(threshold + buffer, mu, sd),
                             digits = 2,
                             max_digits = 4,
                             round_zero_one = F)
@@ -846,7 +890,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         mycols["SLD-Likely"],
         '">SLD-Likely</span>** criteria',
         " = ",
-        WJSmisc::prob_label(p_strict,
+        prob_label(p_strict,
                             digits = 2,
                             max_digits = 4,
                             round_zero_one = F)
@@ -858,7 +902,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         mycols["Buffer"],
         '">Buffer</span>**',
         " = ",
-        WJSmisc::prob_label(p_relaxed,
+        prob_label(p_relaxed,
                             digits = 2,
                             max_digits = 4,
                             round_zero_one = F)
@@ -886,7 +930,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         "P(*",symbol,"* < ",
         meaningful_difference - buffer,
         ") = ",
-        WJSmisc::prob_label(pnorm(meaningful_difference - buffer, mu, sd),
+        prob_label(pnorm(meaningful_difference - buffer, mu, sd),
                             digits = 2,
                             max_digits = 4,
                             round_zero_one = F)
@@ -896,7 +940,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         "P(*",symbol,"* > ",
         meaningful_difference,
         ") = ",
-        WJSmisc::prob_label(1 - pnorm(meaningful_difference, mu, sd),
+        prob_label(1 - pnorm(meaningful_difference, mu, sd),
                             digits = 2,
                             max_digits = 4,
                             round_zero_one = F)
