@@ -381,9 +381,9 @@ make_conditional_ppv_plot <- function(
   gacor = .6, # Corelation of G and A
   sacor = .6, # Corelation of S and A
   # Regression effects
-  b_a.g = 0.5, # g's effect on a
-  b_a.s = 0.3, # s's effect on a
-  b_s.g = 0.65, # g's effect on s
+  # b_a.g = 0.5, # g's effect on a
+  # b_a.s = 0.3, # s's effect on a
+  # b_s.g = 0.65, # g's effect on s
   myfont = "Roboto Condensed",
   # viridis_start = viridis_start,
   # viridis_end = viridis_end,
@@ -413,6 +413,36 @@ make_conditional_ppv_plot <- function(
   r_xx <- c(r_gg, r_ss, r_aa)
 
 
+  m_observed_cov <- matrix(c(1, gscor, gacor,
+                             gscor, 1, sacor,
+                             gacor, sacor, 1), nrow = 3)
+
+  m_true_cov <- m_observed_cov
+
+  diag(m_true_cov) <- r_xx
+  m_cov <- rbind(cbind(m_true_cov, m_true_cov),
+                 cbind(m_true_cov, m_observed_cov))
+
+    colnames(m_cov) <- v_names
+  rownames(m_cov) <- v_names
+
+
+  if (det(m_cov) <= 0) stop("This combination of reliability and correlation coefficents is mathematically impossible.")
+
+  cov_all <- m_cov * sigma ^ 2
+  # True score covariance
+  cov_true <- cov_all[v_true, v_true]
+  # Observed score covariance
+  cov_observed <- cov_all[v_observed, v_observed]
+  # Cross covariances
+  cov_true_observed <-  cov_all[v_true, v_observed]
+
+  b_s.g <- (solve(m_true_cov[1,1,drop = F]) %*% m_true_cov[1,2,drop = F])[1,1]
+
+  b_a <- (solve(m_true_cov[c(1,2),c(1,2),drop = F]) %*% m_true_cov[c(1,2),3,drop = F])[,1]
+  b_a.g <- b_a[1]
+  b_a.s <- b_a[2]
+
   # Explained variance
   s_by_g <- r_gg * (b_s.g ^ 2)
   a_by_g <- r_gg * (b_a.g + b_s.g * b_a.s) ^ 2
@@ -421,47 +451,6 @@ make_conditional_ppv_plot <- function(
   # Residual variances
   v_s <- r_ss - s_by_g
   v_a <- r_aa - a_by_g - a_by_s
-
-
-  # Model for simulation
-  m <- glue::glue(
-    "
-s ~ {b_s.g} * g
-g ~~ {r_gg} * g
-s ~~ {v_s} * s
-G ~ 1 * g
-G ~~ (1 - {r_gg}) * G
-S ~ 1 * s
-S ~~ (1 - {r_ss}) * S
-a ~ {b_a.g} * g + {b_a.s} * s
-a ~~ {v_a} * a
-A ~ 1 * a
-A ~~ (1 - {r_aa}) * A
-"
-  )
-
-  # Model-implied Covariance Matrix
-  m_cov <- lavaan::fitted(lavaan::sem(m))$cov[v_names, v_names]
-  m_cor <- cov2cor(m_cov)
-  m_observed_cov <- matrix(c(1, gscor, gacor,
-                    gscor, 1, sacor,
-                    gacor, sacor, 1), nrow = 3)
-
-  m_true_cov <- m_observed_cov
-  diag(m_true_cov) <- r_xx
-  m_cov <- rbind(cbind(m_true_cov, m_true_cov),
-                 cbind(m_true_cov, m_observed_cov))
-  if (det(m_cov) <= 0) stop("This combination of reliability and correlation coefficents is mathematically impossible.")
-
-  colnames(m_cov) <- v_names
-  rownames(m_cov) <- v_names
-  cov_all <- m_cov * sigma ^ 2
-  # True score covariance
-  cov_true <- cov_all[v_true, v_true]
-  # Observed score covariance
-  cov_observed <- cov_all[v_observed, v_observed]
-  # Cross covariances
-  cov_true_observed <-  cov_all[v_true, v_observed]
 
   # Conditional means
   mu_conditional <-
@@ -630,7 +619,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
       Ability == "Population",
       "",
       paste0("italic(r[xx]) == '",
-             c("", WJSmisc::remove_leading_zero(r_xx)),
+             c("", remove_leading_zero(r_xx)),
              "'"))) %>%
     mutate(
       Score = c(100, General, Specific, Academic),
@@ -1056,8 +1045,142 @@ A       	0.00 	0.00 	0.00 	-1.00"
   # Join plots
   gp <- (gp1 / gp2 + patchwork::plot_layout(heights = c(2.1, 1)))
 
-  # Display plot
-  gp
+  # Return list
+  list(
+    plot = gp,
+    model = paste0('
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="376.93pt" height="237pt" viewBox="0 0 376.93 237" version="1.1">
+	<style>
+		.latent {fill:white; font-size:20pt; font-style:italic; }
+		.observed {fill:white; font-size:20pt; font-style:normal; }
+		.blabel {fill:rgb(40%,40%,40%); font-size:8pt; color: rgb(40%,40%,40%)}
+	</style>
+	<g id="surface1">
+		<g id="latent">
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(34.707642%,51.998901%,69.291687%);fill-opacity:1;" d="M 163.664063 56.367188 C 163.664063 40.710938 150.972656 28.019531 135.316406 28.019531 C 119.660156 28.019531 106.96875 40.710938 106.96875 56.367188 C 106.96875 72.023438 119.660156 84.714844 135.316406 84.714844 C 150.972656 84.714844 163.664063 72.023438 163.664063 56.367188 Z M 163.664063 56.367188 "/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(36.999512%,55.332947%,37.333679%);fill-opacity:1;" d="M 163.664063 179.113281 C 163.664063 163.457031 150.972656 150.765625 135.316406 150.765625 C 119.660156 150.765625 106.96875 163.457031 106.96875 179.113281 C 106.96875 194.769531 119.660156 207.460938 135.316406 207.460938 C 150.972656 207.460938 163.664063 194.769531 163.664063 179.113281 Z M 163.664063 179.113281 "/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(47.3526%,37.353516%,63.233948%);fill-opacity:1;" d="M 269.964844 117.742188 C 269.964844 102.085938 257.273438 89.394531 241.617188 89.394531 C 225.960938 89.394531 213.269531 102.085938 213.269531 117.742188 C 213.269531 133.398438 225.960938 146.085938 241.617188 146.085938 C 257.273438 146.085938 269.964844 133.398438 269.964844 117.742188 Z M 269.964844 117.742188 "/>
+			<g class="latent">
+				<text text-anchor="middle" x="136" y="61">g</text>
+				<text text-anchor="middle" x="136" y="187">s</text>
+				<text text-anchor="middle" x="241" y="125">a</text>
+			</g>
+			<g id="latentvar">
+				<path style="fill:none;stroke-width:0.79701;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -25.789063 93.951937 C -15.597656 115.8035 -55.269531 115.8035 -45.078125 93.951937 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 143.648438 26.605469 C 144.429688 25.539063 145.886719 23.644531 147.597656 22.730469 C 145.761719 23.300781 144.820313 22.863281 144.078125 21.089844 C 144.476563 22.988281 143.960938 25.320313 143.648438 26.605469 Z M 143.648438 26.605469 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 126.984375 26.605469 C 126.671875 25.320313 126.15625 22.988281 126.554688 21.089844 C 125.8125 22.863281 124.871094 23.300781 123.035156 22.730469 C 124.746094 23.644531 126.203125 25.539063 126.984375 26.605469 Z M 126.984375 26.605469 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 143.871094 8.554688 C 143.871094 3.832031 140.039063 0 135.316406 0 C 130.59375 0 126.761719 3.832031 126.761719 8.554688 C 126.761719 13.277344 130.59375 17.109375 135.316406 17.109375 C 140.039063 17.109375 143.871094 13.277344 143.871094 8.554688 Z M 143.871094 8.554688 "/>
+				<g transform="translate(135,13)">
+					<text id="varg" class="blabel" text-anchor="middle" transform="rotate(0)">1.0</text>
+				</g>
+				<path style="fill:none;stroke-width:0.79701;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M 80.511719 32.580844 C 90.703125 54.432406 51.03125 54.432406 61.222656 32.580844 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 249.949219 87.976563 C 250.730469 86.914063 252.1875 85.019531 253.898438 84.101563 C 252.0625 84.675781 251.121094 84.238281 250.378906 82.460938 C 250.777344 84.363281 250.261719 86.695313 249.949219 87.976563 Z M 249.949219 87.976563 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 233.285156 87.976563 C 232.972656 86.695313 232.457031 84.363281 232.855469 82.460938 C 232.113281 84.238281 231.171875 84.675781 229.335938 84.101563 C 231.046875 85.019531 232.503906 86.914063 233.285156 87.976563 Z M 233.285156 87.976563 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 250.09375 69.925781 C 250.09375 65.246094 246.300781 61.449219 241.617188 61.449219 C 236.933594 61.449219 233.140625 65.246094 233.140625 69.925781 C 233.140625 74.609375 236.933594 78.40625 241.617188 78.40625 C 246.300781 78.40625 250.09375 74.609375 250.09375 69.925781 Z M 250.09375 69.925781 "/>
+				<g transform="translate(241.5,74)">
+					<text id="vara" class="blabel" text-anchor="middle" transform="rotate(0)">',
+					str_remove(formatC(v_a, digits = 2, format = "f"), pattern = "^0"),
+					'</text>
+				</g>
+				<path style="fill:none;stroke-width:0.79701;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -45.078125 -93.954313 C -55.269531 -115.805875 -15.597656 -115.805875 -25.789063 -93.954313 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 126.984375 208.878906 C 126.203125 209.941406 124.746094 211.835938 123.035156 212.75 C 124.871094 212.179688 125.8125 212.617188 126.554688 214.394531 C 126.15625 212.492188 126.671875 210.160156 126.984375 208.878906 Z M 126.984375 208.878906 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 143.648438 208.878906 C 143.960938 210.160156 144.476563 212.492188 144.078125 214.394531 C 144.820313 212.617188 145.761719 212.179688 147.597656 212.75 C 145.886719 211.835938 144.429688 209.941406 143.648438 208.878906 Z M 143.648438 208.878906 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 143.832031 226.925781 C 143.832031 222.222656 140.019531 218.414063 135.316406 218.414063 C 130.613281 218.414063 126.800781 222.222656 126.800781 226.925781 C 126.800781 231.628906 130.613281 235.441406 135.316406 235.441406 C 140.019531 235.441406 143.832031 231.628906 143.832031 226.925781 Z M 143.832031 226.925781 "/>
+				<g transform="translate(134.5,230)">
+					<text id="bvars" class="blabel" text-anchor="middle" transform="rotate(0)">',
+str_remove(formatC(v_s, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+			<g id="ga">
+				<path style="fill:none;stroke-width:1.59404;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -6.914063 44.908969 L 38.414063 18.737094 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 213.097656 101.277344 C 211.648438 100.003906 209.078125 97.644531 207.960938 95.03125 C 208.558594 97.78125 207.804688 99.09375 205.121094 99.949219 C 207.941406 99.609375 211.269531 100.65625 213.097656 101.277344 Z M 213.097656 101.277344 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 195.578125 86.246094 C 195.578125 81.542969 191.765625 77.730469 187.0625 77.730469 C 182.359375 77.730469 178.546875 81.542969 178.546875 86.246094 C 178.546875 90.945313 182.359375 94.757813 187.0625 94.757813 C 191.765625 94.757813 195.578125 90.945313 195.578125 86.246094 Z M 195.578125 86.246094 "/>
+				<g transform="translate(185,89.5)">
+					<text id="bga" class="blabel" text-anchor="middle" transform="rotate(30)">',
+str_remove(formatC(b_a.g, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+			<g id="sa">
+				<path style="fill:none;stroke-width:1.59404;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -6.914063 -44.907438 L 38.414063 -18.735563 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 213.097656 134.207031 C 211.269531 134.824219 207.941406 135.871094 205.121094 135.53125 C 207.804688 136.390625 208.558594 137.699219 207.960938 140.449219 C 209.078125 137.839844 211.648438 135.480469 213.097656 134.207031 Z M 213.097656 134.207031 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 195.578125 149.238281 C 195.578125 144.535156 191.765625 140.722656 187.0625 140.722656 C 182.359375 140.722656 178.546875 144.535156 178.546875 149.238281 C 178.546875 153.941406 182.359375 157.753906 187.0625 157.753906 C 191.765625 157.753906 195.578125 153.941406 195.578125 149.238281 Z M 195.578125 149.238281 "/>
+				<g transform="translate(188,152)">
+					<text id="bsa" class="blabel" text-anchor="middle" transform="rotate(-30)">',
+str_remove(formatC(b_a.s, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+			<g id="ga">
+				<path style="fill:none;stroke-width:1.59404;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -35.433594 28.444125 L -35.433594 -23.899625 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 135.316406 146.183594 C 135.695313 144.292969 136.453125 140.882813 138.15625 138.613281 C 136.074219 140.503906 134.558594 140.503906 132.476563 138.613281 C 134.179688 140.882813 134.9375 144.292969 135.316406 146.183594 Z M 135.316406 146.183594 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 143.832031 116.121094 C 143.832031 111.417969 140.019531 107.605469 135.316406 107.605469 C 130.613281 107.605469 126.800781 111.417969 126.800781 116.121094 C 126.800781 120.824219 130.613281 124.636719 135.316406 124.636719 C 140.019531 124.636719 143.832031 120.824219 143.832031 116.121094 Z M 143.832031 116.121094 "/>
+				<g style="fill:rgb(39.99939%,39.99939%,39.99939%);fill-opacity:1;" transform="translate(134,119)">
+					<text id="bgs" class="blabel" text-anchor="middle" transform="rotate(0)">',
+str_remove(formatC(b_s.g, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+		</g>
+		<g id="observed">
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(34.707642%,51.998901%,69.291687%);fill-opacity:1;" d="M 73.839844 32.273438 L 33.621094 32.273438 C 31.421875 32.273438 29.636719 34.058594 29.636719 36.257813 L 29.636719 76.476563 C 29.636719 78.679688 31.421875 80.464844 33.621094 80.464844 L 73.839844 80.464844 C 76.042969 80.464844 77.824219 78.679688 77.824219 76.476563 L 77.824219 36.257813 C 77.824219 34.058594 76.042969 32.273438 73.839844 32.273438 Z M 73.839844 32.273438 "/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(36.999512%,55.332947%,37.333679%);fill-opacity:1;" d="M 73.839844 155.019531 L 33.621094 155.019531 C 31.421875 155.019531 29.636719 156.804688 29.636719 159.003906 L 29.636719 199.222656 C 29.636719 201.425781 31.421875 203.207031 33.621094 203.207031 L 73.839844 203.207031 C 76.042969 203.207031 77.824219 201.425781 77.824219 199.222656 L 77.824219 159.003906 C 77.824219 156.804688 76.042969 155.019531 73.839844 155.019531 Z M 73.839844 155.019531 "/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(47.3526%,37.353516%,63.233948%);fill-opacity:1;" d="M 343.3125 93.644531 L 303.09375 93.644531 C 300.890625 93.644531 299.109375 95.429688 299.109375 97.632813 L 299.109375 137.851563 C 299.109375 140.050781 300.890625 141.835938 303.09375 141.835938 L 343.3125 141.835938 C 345.511719 141.835938 347.296875 140.050781 347.296875 137.851563 L 347.296875 97.632813 C 347.296875 95.429688 345.511719 93.644531 343.3125 93.644531 Z M 343.3125 93.644531 "/>
+			<g class="observed">
+				<text text-anchor="middle" x="54" y="66">G</text>
+				<text text-anchor="middle" x="54" y="189">S</text>
+				<text text-anchor="middle" x="323" y="127">A</text>
+			</g>
+		</g>
+		<g id="loadings">
+			<path style="fill:none;stroke-width:1.59404;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -68.363281 61.373812 L -84.195313 61.373812 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 82.011719 56.367188 C 83.902344 56.746094 87.308594 57.503906 89.582031 59.207031 C 87.6875 57.125 87.6875 55.609375 89.582031 53.527344 C 87.308594 55.234375 83.902344 55.988281 82.011719 56.367188 Z M 82.011719 56.367188 "/>
+			<path style="fill:none;stroke-width:1.59404;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -68.363281 -61.372281 L -84.195313 -61.372281 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 82.011719 179.113281 C 83.902344 179.492188 87.308594 180.25 89.582031 181.953125 C 87.6875 179.871094 87.6875 178.355469 89.582031 176.273438 C 87.308594 177.976563 83.902344 178.734375 82.011719 179.113281 Z M 82.011719 179.113281 "/>
+			<path style="fill:none;stroke-width:1.59404;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M 103.796875 -0.0011875 L 119.628906 -0.0011875 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+			<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 294.921875 117.742188 C 293.03125 117.363281 289.625 116.605469 287.351563 114.902344 C 289.246094 116.984375 289.246094 118.5 287.351563 120.582031 C 289.625 118.875 293.03125 118.121094 294.921875 117.742188 Z M 294.921875 117.742188 "/>
+		</g>
+		<g id="varOb">
+			<g id="varObG">
+				<path style="fill:none;stroke-width:0.79701;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -145.9375 71.420687 C -169.210938 82.276156 -169.210938 40.471469 -145.9375 51.323031 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 27.632813 47.632813 C 26.566406 46.851563 24.671875 45.394531 23.757813 43.683594 C 24.328125 45.519531 23.890625 46.460938 22.113281 47.203125 C 24.015625 46.804688 26.347656 47.320313 27.632813 47.632813 Z M 27.632813 47.632813 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 27.632813 65.105469 C 26.347656 65.417969 24.015625 65.933594 22.113281 65.53125 C 23.890625 66.277344 24.328125 67.214844 23.757813 69.054688 C 24.671875 67.339844 26.566406 65.886719 27.632813 65.105469 Z M 27.632813 65.105469 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 17.027344 56.367188 C 17.027344 51.664063 13.214844 47.851563 8.511719 47.851563 C 3.808594 47.851563 0 51.664063 0 56.367188 C 0 61.070313 3.808594 64.882813 8.511719 64.882813 C 13.214844 64.882813 17.027344 61.070313 17.027344 56.367188 Z M 17.027344 56.367188 "/>
+				<g transform="translate(7.5,59.75)">
+					<text id="bvarObG" class="blabel" text-anchor="middle" transform="rotate(0)">',
+str_remove(formatC(1 - r_gg, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+			<g id="varObS">
+				<path style="fill:none;stroke-width:0.79701;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M -145.9375 -51.325406 C -169.210938 -40.469938 -169.210938 -82.274625 -145.9375 -71.423063 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 27.632813 170.378906 C 26.566406 169.597656 24.671875 168.140625 23.757813 166.429688 C 24.328125 168.265625 23.890625 169.207031 22.113281 169.949219 C 24.015625 169.550781 26.347656 170.066406 27.632813 170.378906 Z M 27.632813 170.378906 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 27.632813 187.847656 C 26.347656 188.160156 24.015625 188.679688 22.113281 188.277344 C 23.890625 189.023438 24.328125 189.960938 23.757813 191.800781 C 24.671875 190.085938 26.566406 188.632813 27.632813 187.847656 Z M 27.632813 187.847656 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 17.027344 179.113281 C 17.027344 174.410156 13.214844 170.597656 8.511719 170.597656 C 3.808594 170.597656 0 174.410156 0 179.113281 C 0 183.816406 3.808594 187.628906 8.511719 187.628906 C 13.214844 187.628906 17.027344 183.816406 17.027344 179.113281 Z M 17.027344 179.113281 "/>
+				<g transform="translate(7.5,183)">
+					<text id="bvarObS" class="blabel" text-anchor="middle" transform="rotate(0)">',
+str_remove(formatC(1 - r_ss, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+			<g id="varObA">
+				<path style="fill:none;stroke-width:0.79701;stroke-linecap:butt;stroke-linejoin:miter;stroke:rgb(59.999084%,59.999084%,59.999084%);stroke-opacity:1;stroke-miterlimit:10;" d="M 181.371094 -10.048063 C 204.644531 -20.903531 204.644531 20.901156 181.371094 10.049594 " transform="matrix(1,0,0,-1,170.75,117.741)"/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 349.300781 126.476563 C 350.367188 127.257813 352.261719 128.714844 353.175781 130.425781 C 352.605469 128.589844 353.042969 127.648438 354.816406 126.90625 C 352.917969 127.304688 350.585938 126.789063 349.300781 126.476563 Z M 349.300781 126.476563 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 349.300781 109.003906 C 350.585938 108.691406 352.917969 108.175781 354.816406 108.578125 C 353.042969 107.832031 352.605469 106.894531 353.175781 105.054688 C 352.261719 106.769531 350.367188 108.222656 349.300781 109.003906 Z M 349.300781 109.003906 "/>
+				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 376.933594 117.742188 C 376.933594 113.039063 373.121094 109.226563 368.421875 109.226563 C 363.71875 109.226563 359.90625 113.039063 359.90625 117.742188 C 359.90625 122.445313 363.71875 126.257813 368.421875 126.257813 C 373.121094 126.257813 376.933594 122.445313 376.933594 117.742188 Z M 376.933594 117.742188 "/>
+				<g transform="translate(370,121.5)">
+					<text id="bvarObA" class="blabel" text-anchor="middle" transform="rotate(0)">',
+str_remove(formatC(1 - r_aa, digits = 2, format = "f"), pattern = "^0"),
+'</text>
+				</g>
+			</g>
+		</g>
+	</g>
+</svg>')
+
+  )
 }
 
 
@@ -1109,11 +1232,11 @@ ui <- fixedPage(
             tags$table(
                 style = "border-collapse: collapse;",
                 tags$thead(tags$tr(
-                    tags$td(style = "width:40%;"),
-                    tags$td("Ability",
+                    tags$th(style = "width:40%;"),
+                    tags$th("Score",
                             class = "text-center",
                             style = "width:30%;"),
-                    tags$td(em(HTML("r<sub>xx</sub>")),
+                    tags$th(em(HTML("r<sub>xx</sub>")),
                             class = "text-center",
                             style = "width:30%;")
                 )),
@@ -1160,7 +1283,7 @@ ui <- fixedPage(
                             inputId = "specificReliability",
                             label = NULL,
                             value = 0.92,
-                            min = .6,
+                            min = 0,
                             max = .99999,
                             step = .01
                         )
@@ -1184,18 +1307,56 @@ ui <- fixedPage(
                             inputId = "academicReliability",
                             label = NULL,
                             value = 0.92,
-                            min = .6,
+                            min = 0,
                             max = .99999,
                             step = .01
                         )
                     ),
                 )
             ),
+            p(),
+            tags$table(class = "table-condensed w-100",
+                         tags$tr(
+                           tags$td("Threshold for Low Scores", style = "width:70%;"),
+                           tags$td(style = "width:30%;",
+                                   numericInput(
+                                     "threshold",
+                                     NULL,
+                                     min = 40,
+                                     max = 160,
+                                     value = 85
+                                   )),
+                         ),
+                         tags$tr(
+                           tags$td("Buffer Width"),
+                           tags$td(
+                             numericInput(
+                               "buffer",
+                               NULL,
+                               min = 0,
+                               max = 60,
+                               value = 5
+                             )
+                           ),
+                         ),
+                         tags$tr(
+                           tags$td("Meaningful Difference"),
+                           tags$td(
+                             numericInput(
+                               "meaningfuldifference",
+                               NULL,
+                               min = -60,
+                               max = 60,
+                               value = 10
+                             )
+                           ))
+                       ),
+            p(),
             tags$table(class = "table-condensed w-100",
                        tags$thead(
                          tags$tr(
                            # style = "border-bottom: 0.5px solid gray;",
-                           tags$td(style = "width:40%;", tags$strong("Correlations"), class = "pt-3"),
+                           tags$th(style = "width:40%;", "Correlations", class = "pt-3"),
                            tags$td(class = "text-center pt-3", style = "width:30%;", "Specific"),
                            tags$td(class = "text-center pt-3", style = "width:30%;", "Academic")
                          )
@@ -1207,7 +1368,7 @@ ui <- fixedPage(
                            numericInput(
                              inputId = "gscor",
                              label = NULL,
-                             value = 0.60,
+                             value = 0.70,
                              min = -1,
                              max = 1,
                              step = .01
@@ -1218,7 +1379,7 @@ ui <- fixedPage(
                            numericInput(
                              inputId = "gacor",
                              label = NULL,
-                             value = 0.60,
+                             value = 0.65,
                              min = -1,
                              max = 1,
                              step = .01
@@ -1241,45 +1402,6 @@ ui <- fixedPage(
                          )
                        )
                        ),
-            # tags$table(
-            #     class = "table-condensed",
-            #     tags$thead(
-            #         tags$tr(
-            #             style = "border-bottom: 0.5px solid gray;",
-            #             tags$td(class = "w-75", "Outcome"),
-            #             tags$td(class = "w-25 text-center", "Probability")
-            #         )
-            #     ),
-            #     tags$tr(
-            #         style = "border-bottom: 0.5px solid gray; background-color:#E5E0EB",
-            #         tags$td(htmlOutput("ppv_label")),
-            #         tags$td(htmlOutput("ppv"), class = "text-center")
-            #     ),
-            #     tags$tr(
-            #         style = "border-bottom: 0.5px solid gray; background-color:#E4F6EB",
-            #         tags$td(htmlOutput("pbuffer_label")),
-            #         tags$td(htmlOutput("pbuffer"), class = "text-center")
-            #     )
-            # ),
-            p(),
-            splitLayout(
-                cellWidths = split_width,
-                numericInput(
-                    "threshold",
-                    "Threshold",
-                    min = 40,
-                    max = 160,
-                    value = 85
-                ),
-                numericInput(
-                    "buffer",
-                    "Buffer",
-                    min = 0,
-                    max = 15,
-                    value = 5
-                )
-            )
-
         ),
 
         # Show a plot of the generated distribution
@@ -1288,6 +1410,8 @@ ui <- fixedPage(
           tabsetPanel(type = "tabs",
                       tabPanel("Plot",
                                plotOutput("distPlot")),
+                      tabPanel("Model",
+                               htmlOutput("model")),
                       tabPanel(
                         "Calculations",
                         p(em("Assumptions:"), "All observed and true scores are multivariate normal."),
@@ -1331,58 +1455,7 @@ p(r"(To calculate the multivariate conditional PPV, we specify a multivariate no
 
 # Define server logic required to draw a histogram
 server <- function(input, output) {
-    # plotstuff <- shiny::reactive({
-
-
-
-        # myplot(
-        #     x = c(
-        #         ifelse(
-        #             is.numeric(input$generalAbility),
-        #             input$generalAbility,
-        #             100
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$specificAbility),
-        #             input$specificAbility,
-        #             100
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$academicAbility),
-        #             input$academicAbility,
-        #             100
-        #         )
-        #     ),
-        #     threshold = input$threshold,
-        #     rxx = c(
-        #         ifelse(
-        #             is.numeric(input$generalReliability),
-        #             input$generalReliability,
-        #             0
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$specificReliability),
-        #             input$specificReliability,
-        #             0
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$academicReliability),
-        #             input$academicReliability,
-        #             0
-        #         )
-        #     ),
-        #     buffer = input$buffer
-        # )
-    # })
-
-    # output$ppv_label = renderText(plotstuff()[["ppv_label"]])
-    # output$pbuffer_label <-
-    #     renderText(plotstuff()[["pbuffer_label"]])
-
-    # output$ppv <- renderText(plotstuff()[["ppv"]])
-    # output$pbuffer <- renderText(plotstuff()[["pbuffer"]])
-
-    output$distPlot <- renderPlot({
+    plotstuff <- shiny::reactive({
       make_conditional_ppv_plot(
         General = ifelse(
           is.numeric(input$generalAbility),
@@ -1429,6 +1502,10 @@ server <- function(input, output) {
           is.numeric(input$threshold),
           input$threshold,
           85),
+        meaningful_difference = ifelse(
+          is.numeric(input$meaningfuldifference),
+          input$meaningfuldifference,
+          5),
         gscor = ifelse(
           is.numeric(input$gscor),
           input$gscor,
@@ -1442,7 +1519,59 @@ server <- function(input, output) {
           input$sacor,
           0.6)
       )
-    }, height = 800)
+
+
+
+        # myplot(
+        #     x = c(
+        #         ifelse(
+        #             is.numeric(input$generalAbility),
+        #             input$generalAbility,
+        #             100
+        #         ),
+        #         ifelse(
+        #             is.numeric(input$specificAbility),
+        #             input$specificAbility,
+        #             100
+        #         ),
+        #         ifelse(
+        #             is.numeric(input$academicAbility),
+        #             input$academicAbility,
+        #             100
+        #         )
+        #     ),
+        #     threshold = input$threshold,
+        #     rxx = c(
+        #         ifelse(
+        #             is.numeric(input$generalReliability),
+        #             input$generalReliability,
+        #             0
+        #         ),
+        #         ifelse(
+        #             is.numeric(input$specificReliability),
+        #             input$specificReliability,
+        #             0
+        #         ),
+        #         ifelse(
+        #             is.numeric(input$academicReliability),
+        #             input$academicReliability,
+        #             0
+        #         )
+        #     ),
+        #     buffer = input$buffer
+        # )
+    })
+
+    # output$ppv_label = renderText(plotstuff()[["ppv_label"]])
+    # output$pbuffer_label <-
+    #     renderText(plotstuff()[["pbuffer_label"]])
+
+    # output$ppv <- renderText(plotstuff()[["ppv"]])
+    # output$pbuffer <- renderText(plotstuff()[["pbuffer"]])
+
+    output$distPlot <- renderPlot(plotstuff()[["plot"]], height = 800)
+    output$model <- renderText(plotstuff()[["model"]])
+
 }
 ggplot2::theme_set(ggplot2::theme_minimal(base_size = 18))
 thematic_shiny(font = font_spec(families = "Roboto Condensed", install = T, update = T))
