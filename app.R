@@ -15,6 +15,7 @@ library(bslib)
 library(Cairo)
 library(showtext)
 library(viridis)
+library(patchwork)
 
 # Options
 options(shiny.usecairo = T, # use Cairo device for better antialiasing
@@ -439,6 +440,8 @@ make_conditional_ppv_plot <- function(
   b_size <- 11
 
 
+
+
   mycols <- viridis::viridis(3, begin = viridis_start, end = viridis_end, direction = -1) %>%
     `names<-`(c("SLD-Likely", "Buffer", "SLD-Unlikely"))
 
@@ -642,6 +645,8 @@ A       	0.00 	0.00 	0.00 	-1.00"
                          0.15)
   )
 
+
+
   # distributions and probabilties
   d <- tibble(
     dist = rep("norm", 4),
@@ -708,6 +713,8 @@ A       	0.00 	0.00 	0.00 	-1.00"
         Ability == "Population" ~ "gray50",
         TRUE ~ mycols["Buffer"])
     )
+
+
   # Upper plot ----
   gp1 <- ggplot(d, aes(y = Ability,
                        dist = dist,
@@ -1085,6 +1092,8 @@ A       	0.00 	0.00 	0.00 	-1.00"
       axis.text.y = element_text(vjust = 0,lineheight = 1.2,
                                  hjust = 0.5)
     )
+
+
 
   # Join plots
   gp <- (gp1 / gp2 + patchwork::plot_layout(heights = c(2.1, 1)))
