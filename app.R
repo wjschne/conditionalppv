@@ -4,7 +4,12 @@
 #
 
 library(shiny)
-library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(purrr)
+library(forcats)
+library(stringr)
+library(tibble)
 library(scales)
 library(ggdist)
 library(ggtext)
@@ -15,11 +20,15 @@ library(bslib)
 library(Cairo)
 library(viridis)
 library(patchwork)
+library(mvtnorm)
+library(condMVNorm)
 
 # Options
 options(shiny.usecairo = T, # use Cairo device for better antialiasing
         scipen = 999 # Do not use scientific notation
         )
+
+# Helper functions ----
 
 # Remove leading zero for display of proportions
 remove_leading_zero <- function(x, digits = 2) {
@@ -96,317 +105,27 @@ ggtext_size <- function(base_size, ratio = 0.8) {
     ratio * base_size / 2.845276
 }
 
+# Constants ----
+
 # SLD colors
 mycolors <- c(SLD = "#482576",
               Buffer = "#35608D",
               NotSLD = "#43BF71")
+
+# Not sure why this is needed, but it is.
 mycolours <- mycolors
 
 lightenedcolors <- tinter::lighten(mycolors, .15)
-
 
 viridis_start = .20
 viridis_end = .75
 viridis_alpha = .40
 
-myplot <-
-    function(x, # General, specific, and academic scores
-             rxx = rep(0.95, length(x)), # 3 reliability scores
-             threshold = 85, # Decision threshold
-             mu = 100, # Mean
-             sigma = 15, # SD
-             buffer = 5 # Decision threshold
-             ) {
-
-        # Shaded regions
-        d_rect <- tibble(
-            x = c(
-                40,
-                40,
-                threshold + buffer,
-                threshold + buffer,
-                threshold,
-                40,
-                threshold + buffer
-            ),
-            y = c(1, 3, 3, 1, 1, 4, 4) - 0.2,
-            xmax = c(
-                threshold,
-                threshold,
-                160,
-                160,
-                threshold + buffer,
-                threshold,
-                160
-            ),
-            ymax = c(3, 4, 4, 3, 5, 5, 5) - 0.2,
-            fill = scales::alpha(c(mycolors[c("SLD",
-                                              "NotSLD",
-                                              "SLD",
-                                              "NotSLD",
-                                              "Buffer")],
-                                   "gray30",
-                                   "gray70"),
-                                 0.15)
-        )
-
-        # Make plot theme match page theme
-        thematic_on(font = "Roboto Condensed")
-
-        # Standard error of the estimate
-        see <- 15 * sqrt(rxx - rxx ^ 2)
-
-        # Conditional mean
-        mu <- (x - 100) * rxx + 100
-
-        # P(x < threshold)
-        p_threshold <- pnorm(threshold, mu, see)
-
-        # P(x < buffer)
-        p_buffer <- pnorm(threshold + buffer, mu, see)
-
-        # conditional PPV: P(x) is sld-consisent
-        conditional_ppv <- (1 - p_buffer[1]) *
-            p_threshold[2] *
-            p_threshold[3]
-
-        # P(x) is not inconsistent with SLD
-        p_not_inconsistent <- (1 - p_threshold[1]) *
-            p_buffer[2] *
-            p_buffer[3]
-
-        # text output for probabilities
-        pp_buffer_label <- pnorm(threshold + buffer, mu, see)
-        pp_buffer_label[1] <- 1 - pp_buffer_label[1]
-
-        d <- tibble(
-            dist = rep("norm", 4),
-            args = list(list(100, 15),
-                     list(mu[1], see[1]),
-                     list(mu[2], see[2]),
-                     list(mu[3], see[3])),
-            Ability = c(
-                "Population",
-                "General\nAbility",
-                "Specific\nAbility",
-                "Academic\nAbility"
-            )
-        ) %>%
-            mutate(rxx_display = if_else(
-                Ability == "Population",
-                "",
-                paste0("italic(r[xx]) == '",
-                       c("", remove_leading_zero(rxx)),
-                       "'"))) %>%
-            mutate(
-                Score = c(100, x),
-                mu = c(100, mu),
-                sd = c(15, see),
-                p = paste0(
-                    "P(*X* < ",
-                    threshold,
-                    ") = ",
-                    number(pnorm(threshold, mu, sd),
-                           0.01) %>%
-                        str_remove("^0")
-                ),
-                ScoreDisplay = ifelse(
-                    Ability == "Population",
-                    0,
-                    Score),
-                p_more = paste0(
-                    "P(*X* > ",
-                    threshold + buffer,
-                    ") = ",
-                    number(1 - pnorm(threshold + buffer,
-                                     Score,
-                                     sd), 0.01) %>%
-                        str_remove("^0")
-                ),
-                Ability = factor(Ability) %>%
-                    fct_inorder() %>%
-                    fct_rev(),
-                p_less_color = case_when(
-                    Ability == "Population" ~ "gray30",
-                    Ability == "General\nAbility" ~ mycolors["NotSLD"],
-                    TRUE ~ mycolors["SLD"]
-                ),
-                p_more_color = case_when(
-                    Ability == "Population" ~ "gray70",
-                    Ability == "General\nAbility" ~ mycolors["SLD"],
-                    TRUE ~ mycolors["NotSLD"]
-                ),
-                p_between_color = case_when(
-                    Ability == "Population" ~ "gray50",
-                    TRUE ~ mycolors["Buffer"])
-            )
+# layout widths
+split_width <- c("50%", "50%")
 
 
-        myplot <-
-            ggplot(d, aes(y = Ability,
-                          dist = dist,
-                          args = args)) +
-            geom_richtext(
-                aes(
-                    label = p,
-                    x = threshold - 1,
-                    y = as.numeric(Ability),
-                    color = p_less_color
-                ),
-                vjust = 1.4,
-                hjust = 1,
-                size = ggtext_size(16),
-                label.padding = unit(0, "mm"),
-                show.legend = F,
-                label.colour = NA
-            ) +
-            geom_richtext(
-                aes(
-                    label = p_more,
-                    x = threshold + buffer + 1,
-                    y = as.numeric(Ability),
-                    color = p_more_color,
-                ),
-                vjust = 1.4,
-                hjust = 0,
-                size = ggtext_size(16),
-                label.padding = unit(0, "mm"),
-                show.legend = F,
-                label.colour = NA
-            ) +
-            geom_hline(yintercept = 1:4 - 0.2,
-                       size = 0.2,
-                       color = "gray30") +
-            geom_rect(
-                data = d_rect,
-                aes(
-                    xmin = x,
-                    ymin = y,
-                    xmax = xmax,
-                    ymax = ymax,
-                    fill = fill
-                ),
-                inherit.aes = F
-            ) +
-            stat_dist_halfeye(
-                normalize = "groups",
-                aes(fill = stat(
-                    case_when(
-                        y == 4 & x < threshold ~ "gray30",
-                        y == 4 &
-                            x < threshold + buffer ~ mycolors["Buffer"],
-                        y == 4 ~ "gray70",
-                        (x < threshold & y != 3) ~ mycolors["SLD"],
-                        ((x >= threshold + buffer)  &
-                             y == 3) ~ mycolors["SLD"],
-                        (x > threshold + buffer) |
-                            (x < threshold) ~ mycolors["NotSLD"],
-                        TRUE ~ mycolors["Buffer"]
-                    )
-                )),
-                height = 0.8,
-                show_interval = F,
-                alpha = 0.7
-            ) +
-            geom_point(aes(x = ScoreDisplay),
-                       color = "gray20") +
-            geom_text(
-                aes(label = ScoreDisplay,
-                    x = ScoreDisplay),
-                vjust = -.5,
-                size = 5,
-                color = "gray20"
-            ) +
-            geom_vline(xintercept = threshold + buffer,
-                       color = "gray30",
-                       size = 0.25) +
-            geom_vline(xintercept = threshold) +
-            scale_x_continuous(
-                "Standard Scores",
-                breaks = seq(40, 160, 10),
-                minor_breaks = seq(40, 160, 5),
-                expand = expansion(add = 2)
-            ) +
-            scale_y_discrete(NULL, expand = expansion(mult = .05)) +
-            scale_color_identity(NULL) +
-            scale_fill_identity(NULL, guide = "none") +
-            coord_cartesian(xlim = c(40, 160), clip = "off") +
-            theme(
-                plot.title.position = "plot",
-                plot.title = element_markdown(size = 16,
-                                              color = "gray30"),
-                plot.subtitle = element_markdown(size = 16,
-                                                 color = "gray30"),
-                panel.grid.major.y = element_blank(),
-                axis.text.y = element_text(vjust = 0,
-                                           hjust = 0.5)
-            ) +
-            annotate(
-                x = mean(c(threshold,
-                           threshold + buffer)),
-                y = 4,
-                vjust = 0.5,
-                hjust = -0.16,
-                label = paste0("Buffer"),
-                geom = "text",
-                angle = 90,
-                size = ggtext_size(16),
-                family = "Roboto Condensed"
-            ) +
-            annotate(
-                x = threshold + buffer + 1,
-                y = 4,
-                label = "Not Low",
-                geom = "text",
-                angle = 0,
-                hjust = 0,
-                vjust = -0.5,
-                size = ggtext_size(16),
-                family = "Roboto Condensed"
-            ) +
-            annotate(
-                x = threshold - 1,
-                y = 4,
-                label = "Low",
-                geom = "text",
-                angle = 0,
-                hjust = 1,
-                vjust = -0.5,
-                size = ggtext_size(16),
-                family = "Roboto Condensed"
-            )
-
-        # Return list
-        list(
-            plot = myplot,
-            ppv_label = paste0(
-                'All true scores are on the ',
-                '<span style="font-weight: bold; color:',
-                scales::alpha(mycolors["SLD"], 0.7),
-                '">SLD-Likely</span> side of the threshold of ',
-                threshold
-            ),
-            ppv = proportion_round(conditional_ppv, 2) %>%
-                remove_leading_zero(2),
-            pbuffer_label = paste0(
-                'No true score is on the ',
-                '<span style="font-weight: bold; color:',
-                scales::alpha(mycolors["NotSLD"], 0.7),
-                '">SLD-Unlikely</span> side of the ',
-                '<span style="font-weight: bold; color:',
-                scales::alpha(mycolors["Buffer"], 0.7),
-                '">buffer zone</span> (',
-                threshold,
-                "–",
-                threshold + buffer,
-                ")"
-            ),
-            pbuffer = proportion_round(p_not_inconsistent, 2) %>%
-                remove_leading_zero(2)
-
-        )
-    }
-
+# Main plot ----
 make_conditional_ppv_plot <- function(
   General = 100,
   Specific = 85,
@@ -424,22 +143,12 @@ make_conditional_ppv_plot <- function(
   gscor = .6, # Corelation of G and S
   gacor = .6, # Corelation of G and A
   sacor = .6, # Corelation of S and A
-  # Regression effects
-  # b_a.g = 0.5, # g's effect on a
-  # b_a.s = 0.3, # s's effect on a
-  # b_s.g = 0.65, # g's effect on s
   myfont = "Roboto Condensed",
-  # viridis_start = viridis_start,
-  # viridis_end = viridis_end,
-  # viridis_alpha = viridis_alpha,
   sigma = 15,
   mu = 100) {
 
   # Base font size
   b_size <- 11
-
-
-
 
   mycols <- viridis::viridis(3, begin = viridis_start, end = viridis_end, direction = -1) %>%
     `names<-`(c("SLD-Likely", "Buffer", "SLD-Unlikely"))
@@ -473,7 +182,9 @@ make_conditional_ppv_plot <- function(
   rownames(m_cov) <- v_names
 
 
-  if (det(m_cov) <= 0) stop("This combination of reliability and correlation coefficents is mathematically impossible.")
+  if (det(m_cov) <= 0) stop(
+    "This combination of reliability and correlation coefficents is mathematically impossible. Try altering one or more coefficient."
+    )
 
   cov_all <- m_cov * sigma ^ 2
   # True score covariance
@@ -485,9 +196,38 @@ make_conditional_ppv_plot <- function(
 
   b_s.g <- (solve(m_true_cov[1,1,drop = F]) %*% m_true_cov[1,2,drop = F])[1,1]
 
+
+  plot_warnings <- ""
+
+  b_s.g_neg <- b_s.g < 0
+
+  if (b_s.g_neg) plot_warnings <- paste0(plot_warnings,
+      "<li>The direct path between the general ability true score and the specific  ability true score is negative: ",
+      round(b_s.g, 4),
+      "<br> This is an unlikely value for ability data.</li>")
+
+
   b_a <- (solve(m_true_cov[c(1,2),c(1,2),drop = F]) %*% m_true_cov[c(1,2),3,drop = F])[,1]
   b_a.g <- b_a[1]
   b_a.s <- b_a[2]
+
+  b_a.g_neg <- b_a.g < 0
+
+  if (b_a.g_neg) plot_warnings <- paste(plot_warnings,
+      "<li>The direct path between the general ability true score and the academic ability true score is negative: ",
+      round(b_a.g, 4),
+      "<br> This is an unlikely value for academic ability data.</li>")
+
+  b_a.s_neg <- b_a.s < 0
+
+  if (b_a.s_neg) plot_warnings <- paste0(plot_warnings,
+   paste0("<li>The direct path between the specific ability true score and the academic ability true score is negative: ",
+    round(b_a.s, 4),
+    "<br> This is an unlikely value for academic ability data.</li>"))
+
+  if (plot_warnings != "") {
+    plot_warnings <- paste('<div class = "alert alert-danger"><h4>Warning:</h4><p>As seen in the <strong>Model Calculations</strong> tab, the specified reliability and correlation coefficients result in an unlikely model:</p><ul>', plot_warnings , "</ul></div>")
+  }
 
   # Explained variance
   s_by_g <- r_gg * (b_s.g ^ 2)
@@ -514,29 +254,18 @@ make_conditional_ppv_plot <- function(
     t(cov_true_observed)
 
   # Difference weights
-  w_difference <- (
-    "
-variable	gs   	ga   	GS   	GA
-g       	1.00 	1.00 	0.00 	0.00
-s       	-1.00	0.00 	0.00 	0.00
-a       	0.00 	-1.00	0.00 	0.00
-G       	0.00 	0.00 	1.00 	1.00
-S       	0.00 	0.00 	-1.00	0.00
-A       	0.00 	0.00 	0.00 	-1.00"
+  w_difference <- matrix(
+    c(1, -1, rep(0,4),
+      1, 0, -1, rep(0,3)),
+    ncol = 2
   ) %>%
-    I() %>%
-    readr::read_tsv(file = ., show_col_types = F) %>%
-    tibble::column_to_rownames("variable") %>%
-    select(-GS,-GA) %>%
-    as.matrix()
+    `colnames<-`(c("gs", "ga")) %>%
+    `rownames<-`(v_names)
 
   # Full weight matrix
   w <- cbind(diag(6), w_difference) %>%
     `colnames<-`(c(rownames(w_difference),
                    colnames(w_difference)))
-
-  # Conditional Correlations
-  cor_conditional <- cov2cor(cov_conditional)
 
   # Covariance matrix of all scores and true difference scores
   big_sigma <-  t(w) %*% cov_all %*% w
@@ -725,7 +454,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         y = as.numeric(Ability),
         color = p_less_color
       ),
-      vjust = 1.4,
+      vjust = 1.3,
       hjust = 1,
       size = ggtext_size(16),
       label.padding = unit(0, "mm"),
@@ -740,7 +469,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         y = as.numeric(Ability),
         color = p_more_color,
       ),
-      vjust = 1.4,
+      vjust = 1.3,
       hjust = 0,
       size = ggtext_size(16),
       label.padding = unit(0, "mm"),
@@ -830,7 +559,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
                                        color = "gray30",
                                        padding = margin(l = 2, unit = "mm")),
       panel.grid.major.y = element_blank(),
-      axis.text.y = element_text(vjust = 0,lineheight = 1.2,
+      axis.text.y = element_text(vjust = 0,lineheight = 1.2, size = 12,
                                  hjust = 0.5)
     ) +
     annotate(
@@ -925,8 +654,6 @@ A       	0.00 	0.00 	0.00 	-1.00"
       "General -\nAcademic\nDifference"
     ),
     symbol = c("g - s", "g - a")
-    # p_x_strict = c(p_g_strict, p_s_strict, p_a_strict),
-    # p_x_relaxed = c(p_g_relaxed, p_s_relaxed, p_a_relaxed)
   ) %>%
     mutate(
       Score = c(General - Specific, General - Academic),
@@ -979,7 +706,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         y = as.numeric(Ability),
         color = p_less_color
       ),
-      vjust = 1.4,
+      vjust = 1.3,
       hjust = 1,
       size = ggtext_size(16),
       label.padding = unit(0, "mm"),
@@ -994,7 +721,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
         y = as.numeric(Ability),
         color = p_more_color,
       ),
-      vjust = 1.4,
+      vjust = 1.3,
       hjust = 0,
       size = ggtext_size(16),
       label.padding = unit(0, "mm"),
@@ -1054,19 +781,6 @@ A       	0.00 	0.00 	0.00 	-1.00"
       color = "gray20",
       family = myfont
     ) +
-    # annotate(
-    #   x = mean(c(meaningful_difference,
-    #              meaningful_difference - buffer)),
-    #   y = c(1,2),
-    #   vjust = 0.5,
-    #   hjust = -0.06,
-    #   label = paste0("SLD-Possible"),
-    #   geom = "text",
-    #   color = tinter::darken(mycols["Buffer"], amount = .5),
-    #   angle = 90,
-    #   size = ggtext_size(14),
-    #   family = myfont
-    # ) +
     scale_x_continuous(
       "Difference Scores",
       breaks = seq(-60, 60, 10),
@@ -1088,7 +802,7 @@ A       	0.00 	0.00 	0.00 	-1.00"
                                        color = "gray30",
                                        padding = margin(l = 2, unit = "mm")),
       panel.grid.major.y = element_blank(),
-      axis.text.y = element_text(vjust = 0,lineheight = 1.2,
+      axis.text.y = element_text(vjust = 0,lineheight = 1.2, size = 12,
                                  hjust = 0.5)
     )
 
@@ -1097,9 +811,10 @@ A       	0.00 	0.00 	0.00 	-1.00"
   # Join plots
   gp <- (gp1 / gp2 + patchwork::plot_layout(heights = c(2.1, 1)))
 
-  # Return list
+  # Return list ----
   list(
     plot = gp,
+    plot_warnings = plot_warnings,
     model = paste0('
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="0 0 376.93 237" version="1.1">
@@ -1150,8 +865,10 @@ str_remove(formatC(v_s, digits = 2, format = "f"), pattern = "^0"),
 				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 213.097656 101.277344 C 211.648438 100.003906 209.078125 97.644531 207.960938 95.03125 C 208.558594 97.78125 207.804688 99.09375 205.121094 99.949219 C 207.941406 99.609375 211.269531 100.65625 213.097656 101.277344 Z M 213.097656 101.277344 "/>
 				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 195.578125 86.246094 C 195.578125 81.542969 191.765625 77.730469 187.0625 77.730469 C 182.359375 77.730469 178.546875 81.542969 178.546875 86.246094 C 178.546875 90.945313 182.359375 94.757813 187.0625 94.757813 C 191.765625 94.757813 195.578125 90.945313 195.578125 86.246094 Z M 195.578125 86.246094 "/>
 				<g transform="translate(185,89.5)">
-					<text id="bga" class="blabel" text-anchor="middle" transform="rotate(30)">',
-str_remove(formatC(b_a.g, digits = 2, format = "f"), pattern = "^0"),
+					<text id="bga" class="blabel" text-anchor="middle" transform="rotate(30)" ',
+ifelse(b_a.g_neg, 'style="fill: red; font-size: 7pt;"', ''),
+'>',
+prob_label(b_a.g),
 '</text>
 				</g>
 			</g>
@@ -1160,9 +877,11 @@ str_remove(formatC(b_a.g, digits = 2, format = "f"), pattern = "^0"),
 				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 213.097656 134.207031 C 211.269531 134.824219 207.941406 135.871094 205.121094 135.53125 C 207.804688 136.390625 208.558594 137.699219 207.960938 140.449219 C 209.078125 137.839844 211.648438 135.480469 213.097656 134.207031 Z M 213.097656 134.207031 "/>
 				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 195.578125 149.238281 C 195.578125 144.535156 191.765625 140.722656 187.0625 140.722656 C 182.359375 140.722656 178.546875 144.535156 178.546875 149.238281 C 178.546875 153.941406 182.359375 157.753906 187.0625 157.753906 C 191.765625 157.753906 195.578125 153.941406 195.578125 149.238281 Z M 195.578125 149.238281 "/>
 				<g transform="translate(188,152)">
-					<text id="bsa" class="blabel" text-anchor="middle" transform="rotate(-30)">',
-str_remove(formatC(b_a.s, digits = 2, format = "f"), pattern = "^0"),
-'</text>
+					<text id="bsa" class="blabel" text-anchor="middle" transform="rotate(-30)" ',
+ifelse(b_a.s_neg, 'style="fill: red; font-size: 7pt;"', ''),
+'>',
+          prob_label(b_a.s),
+          '</text>
 				</g>
 			</g>
 			<g id="ga">
@@ -1170,8 +889,10 @@ str_remove(formatC(b_a.s, digits = 2, format = "f"), pattern = "^0"),
 				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(59.999084%,59.999084%,59.999084%);fill-opacity:1;" d="M 135.316406 146.183594 C 135.695313 144.292969 136.453125 140.882813 138.15625 138.613281 C 136.074219 140.503906 134.558594 140.503906 132.476563 138.613281 C 134.179688 140.882813 134.9375 144.292969 135.316406 146.183594 Z M 135.316406 146.183594 "/>
 				<path style=" stroke:none;fill-rule:nonzero;fill:rgb(100%,100%,100%);fill-opacity:1;" d="M 143.832031 116.121094 C 143.832031 111.417969 140.019531 107.605469 135.316406 107.605469 C 130.613281 107.605469 126.800781 111.417969 126.800781 116.121094 C 126.800781 120.824219 130.613281 124.636719 135.316406 124.636719 C 140.019531 124.636719 143.832031 120.824219 143.832031 116.121094 Z M 143.832031 116.121094 "/>
 				<g style="fill:rgb(39.99939%,39.99939%,39.99939%);fill-opacity:1;" transform="translate(134,119)">
-					<text id="bgs" class="blabel" text-anchor="middle" transform="rotate(0)">',
-str_remove(formatC(b_s.g, digits = 2, format = "f"), pattern = "^0"),
+					<text id="bgs" class="blabel" text-anchor="middle" transform="rotate(0)" ',
+ifelse(b_s.g_neg, 'style="fill: red; font-size: 7pt;"', ''),
+'>',
+prob_label(b_s.g),
 '</text>
 				</g>
 			</g>
@@ -1238,16 +959,15 @@ str_remove(formatC(1 - r_aa, digits = 2, format = "f"), pattern = "^0"),
 
 
 
-# layout widths
-split_width <- c("50%", "50%")
+
 
 
 # Define UI ----
 ui <- fixedPage(
-    id = "fixedpage",
-    tags$style(
-        HTML(
-            "
+  id = "fixedpage",
+  tags$style(
+    HTML(
+      "
         input[type=number] {
               -moz-appearance:textfield;
         padding: 5px;
@@ -1268,244 +988,297 @@ ui <- fixedPage(
         #fixedpage {max-width: 1020px;}
         .form-group {margin:0;}
     "
-        )
+    )
+  ),
+  theme = bs_theme(
+    base_font = bslib::font_google(
+      "Roboto Condensed",
+      ital = c(0, 1),
+      wght = c(400, 700)
     ),
-    theme = bs_theme(
-        base_font = bslib::font_google("Roboto Condensed", ital = c(0,1), wght = c(400, 700)),
-        primary = scales::alpha(mycolors[1], alpha = 0.7)
-    ),
-    titlePanel(
-        "Measurement Error Affects Specific Learning Disability Identification Accuracy"
-    ),
-    sidebarLayout(
-        sidebarPanel(
-            id = "sidebar",
-            width = 4,
-            tags$table(
-                style = "border-collapse: collapse;",
-                tags$thead(tags$tr(
-                    tags$th(style = "width:40%;"),
-                    tags$th("Score",
-                            class = "text-center",
-                            style = "width:30%;"),
-                    tags$th(em(HTML("r<sub>xx</sub>")),
-                            class = "text-center",
-                            style = "width:30%;")
-                )),
-                tags$tr(
-                    tags$td(class = "align-middle pb-3", "General"),
-                    tags$td(
-                        class = "py-0",
-                        numericInput(
-                            inputId =
-                                "generalAbility",
-                            label = NULL,
-                            min = 40,
-                            max = 160,
-                            value = 100
-                        )
-                    ),
-                    tags$td(
-                        class = "py-0",
-                        numericInput(
-                            inputId =
-                                "generalReliability",
-                            label = NULL,
-                            min = 0,
-                            max = .999999,
-                            value = 0.97
-                        )
-                    ),
-                ),
-                tags$tr(
-                    tags$td("Specific", class = "align-middle  pb-3"),
-                    tags$td(
-                        class = "py-0",
-                        numericInput(
-                            "specificAbility",
-                            NULL,
-                            min = 40,
-                            max = 160,
-                            value = 75
-                        )
-                    ),
-                    tags$td(
-                        class = "py-0",
-                        numericInput(
-                            inputId = "specificReliability",
-                            label = NULL,
-                            value = 0.92,
-                            min = 0,
-                            max = .99999,
-                            step = .01
-                        )
-                    ),
-                ),
-                tags$tr(
-                    tags$td("Academic", class = "align-middle  pb-3"),
-                    tags$td(
-                        class = "py-0",
-                        numericInput(
-                            "academicAbility",
-                            NULL,
-                            min = 40,
-                            max = 160,
-                            value = 81
-                        )
-                    ),
-                    tags$td(
-                        class = "py-0",
-                        numericInput(
-                            inputId = "academicReliability",
-                            label = NULL,
-                            value = 0.92,
-                            min = 0,
-                            max = .99999,
-                            step = .01
-                        )
-                    ),
-                )
-            ),
-            p(),
-            tags$table(class = "table-condensed w-100",
-                         tags$tr(
-                           tags$td("Threshold for Low Scores", style = "width:70%;"),
-                           tags$td(style = "width:30%;",
-                                   numericInput(
-                                     "threshold",
-                                     NULL,
-                                     min = 40,
-                                     max = 160,
-                                     value = 85
-                                   )),
-                         ),
-                         tags$tr(
-                           tags$td("Buffer Width"),
-                           tags$td(
-                             numericInput(
-                               "buffer",
-                               NULL,
-                               min = 0,
-                               max = 60,
-                               value = 5
-                             )
-                           ),
-                         ),
-                         tags$tr(
-                           tags$td("Meaningful Difference"),
-                           tags$td(
-                             numericInput(
-                               "meaningfuldifference",
-                               NULL,
-                               min = -60,
-                               max = 60,
-                               value = 10
-                             )
-                           ))
-                       ),
-            p(),
-            tags$table(class = "table-condensed w-100",
-                       tags$thead(
-                         tags$tr(
-                           # style = "border-bottom: 0.5px solid gray;",
-                           tags$th(style = "width:40%;", "Correlations", class = "pt-3"),
-                           tags$td(class = "text-center pt-3", style = "width:30%;", "Specific"),
-                           tags$td(class = "text-center pt-3", style = "width:30%;", "Academic")
-                         )
-                       ),
-                       tags$tr(
-                         tags$td("General", class = "pb-3"),
-                         tags$td(
-                           class = "py-0",
-                           numericInput(
-                             inputId = "gscor",
-                             label = NULL,
-                             value = 0.70,
-                             min = -1,
-                             max = 1,
-                             step = .01
-                           )
-                         ),
-                         tags$td(
-                           class = "py-0",
-                           numericInput(
-                             inputId = "gacor",
-                             label = NULL,
-                             value = 0.65,
-                             min = -1,
-                             max = 1,
-                             step = .01
-                           )
-                         )
-                       ),
-                       tags$tr(
-                         tags$td("Specific"),
-                         tags$td(""),
-                         tags$td(
-                           class = "py-0",
-                           numericInput(
-                             inputId = "sacor",
-                             label = NULL,
-                             value = 0.60,
-                             min = -1,
-                             max = 1,
-                             step = .01
-                           )
-                         )
-                       )
-                       ),
+    primary = scales::alpha(mycolors[1], alpha = 0.7)
+  ),
+  titlePanel(
+    "Measurement Error Affects Specific Learning Disability Identification Accuracy"
+  ),
+  sidebarLayout(
+    sidebarPanel(
+      id = "sidebar",
+      width = 4,
+      tags$table(
+        class = "table-condensed w-100",
+        tags$thead(tags$tr(
+          tags$th(style = "width:40%;"),
+          tags$th("Score",
+                  class = "text-center",
+                  style = "width:30%;"),
+          tags$th(em(HTML("r<sub>xx</sub>")),
+                  class = "text-center",
+                  style = "width:30%;")
+        )),
+        tags$tr(
+          tags$td(class = "align-middle", "General"),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              inputId =
+                "generalAbility",
+              label = NULL,
+              min = 40,
+              max = 160,
+              value = 100
+            )
+          ),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              inputId =
+                "generalReliability",
+              label = NULL,
+              min = 0,
+              max = .999999,
+              value = 0.97
+            )
+          ),
         ),
+        tags$tr(
+          tags$td("Specific", class = "align-middle"),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              "specificAbility",
+              NULL,
+              min = 40,
+              max = 160,
+              value = 75
+            )
+          ),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              inputId = "specificReliability",
+              label = NULL,
+              value = 0.92,
+              min = 0,
+              max = .99999,
+              step = .01
+            )
+          ),
+        ),
+        tags$tr(
+          tags$td("Academic", class = "align-middle"),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              "academicAbility",
+              NULL,
+              min = 40,
+              max = 160,
+              value = 80
+            )
+          ),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              inputId = "academicReliability",
+              label = NULL,
+              value = 0.92,
+              min = 0,
+              max = .99999,
+              step = .01
+            )
+          ),
+        )
+      ),
+      p(),
+      tags$hr(),
+      tags$table(
+        class = "table-condensed w-100",
+        tags$thead(tags$tr(
+          # style = "border-bottom: 0.5px solid gray;",
+          tags$th(style = "width:40%;", "Correlations"),
+          tags$td(class = "text-center", style = "width:30%;", "Specific"),
+          tags$td(class = "text-center", style = "width:30%;", "Academic")
+        )),
+        tags$tr(
+          tags$td("General", class = "pb-3"),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              inputId = "gscor",
+              label = NULL,
+              value = 0.70,
+              min = -1,
+              max = 1,
+              step = .01
+            )
+          ),
+          tags$td(
+            # class = "py-0",
+            numericInput(
+              inputId = "gacor",
+              label = NULL,
+              value = 0.65,
+              min = -1,
+              max = 1,
+              step = .01
+            )
+          )
+        ),
+        tags$tr(tags$td("Specific"),
+                tags$td(""),
+                tags$td(
+                  # class = "py-0",
+                  numericInput(
+                    inputId = "sacor",
+                    label = NULL,
+                    value = 0.60,
+                    min = -1,
+                    max = 1,
+                    step = .01
+                  )
+                ))
+      ),
+      p(),
+      tags$hr(),
+      tags$table(
+        class = "table-condensed w-100",
+        tags$tr(
+          tags$td("Threshold for Low Scores", style = "width:70%;"),
+          tags$td(
+            style = "width:30%;",
+            numericInput(
+              "threshold",
+              NULL,
+              min = 40,
+              max = 160,
+              value = 85
+            )
+          ),
+        ),
+        tags$tr(tags$td("Buffer Width"),
+                tags$td(
+                  # class =  "py-1",
+                  numericInput(
+                    "buffer",
+                    NULL,
+                    min = 0,
+                    max = 60,
+                    value = 5
+                  )
+                ),),
+        tags$tr(tags$td("Meaningful Difference"),
+                tags$td(
+                  numericInput(
+                    "meaningfuldifference",
+                    NULL,
+                    min = -60,
+                    max = 60,
+                    value = 10
+                  )
+                ))
+      ),
+      hr(),
+      "Created by ",
+        tags$a(target = "_blank",
+               href = "https://wjschne.github.io/",
+               "W. Joel Schneider")
 
-        # Show a plot of the generated distribution
-        mainPanel(
-          width = 8,
-          tabsetPanel(type = "tabs",
-                      tabPanel("Plot",
-                               plotOutput("distPlot")),
-                      tabPanel("Model",
-                               htmlOutput("model")),
-                      tabPanel(
-                        "Calculations",
-                        p(em("Assumptions:"), "All observed and true scores are multivariate normal."),
-                        withMathJax(
-                          p(r"(Suppose that observed scores \(G\), \(S\), and \(A\) have reliability coefficients of \(r_{GG}\), \(r_{SS}\), and \(r_{AA}\), respectively. Their respective true scores are \(g\), \(s\), and \(a\). We can represent the three observed scores as a vector \(X=\left\{G,S,A\right\}\), the true scores as vector \(T=\left\{g,s,a\right\}\), and the true score differences as \(D=\left\{g-s,g-a\right\}\). The covariance matrix of the observed scores is:)"),
-                          p(r"($$\mathbf{\Sigma}_X=\left[
-\begin{matrix}\sigma_G^2&\sigma_{GS}&\sigma_{GA}\\
-	\sigma_{GS}&\sigma_S^2&\sigma_{SA}\\
-	\sigma_{GA}&\sigma_{SA}&\sigma_A^2\\
-\end{matrix}\right]$$)"),
-p("The covariance matrix of the true scores is the same as that of the observed score covariance matrix except that the true score variances are equal to the observed variances multiplied by the appropriate reliability coefficient:"),
-p(r"($$\mathbf{\Sigma}_T=
-  \begin{bmatrix}
-  r_{GG}\sigma_G^2 & \sigma_{GS} & \sigma_{GA}\\
-  \sigma_{GS} & r_{SS}\sigma_S^2 & \sigma_{SA}\\
-  \sigma_{GA} & \sigma_{SA} & r_{AA}\sigma_A^2
-  \end{bmatrix}$$)"),
-p(r"(Because the matrix of covariances between the observed and true scores is the same as the true score covariance matrix, the combined covariance matrix is:)"),
-p(r"($$\mathbf{\Sigma}_{XT}=\left[\begin{matrix}\mathbf{\Sigma}_X&\mathbf{\Sigma}_T\\
-  \mathbf{\Sigma}_T&\mathbf{\Sigma}_T\\
-  \end{matrix}\right]$$)"),
-p(r"(To create the covariance matrix that includes the variances and covariances of true score differences \(g-s\) and \(g-a\), we create a weight matrix \(\boldsymbol{W}\):)"),
-p(r"($$\mathbf{W}=\begin{bmatrix}
-  1&0&0&0&0&0&0&0\\
-  0&1&0&0&0&0&0&0\\
-  0&0&1&0&0&0&0&0\\
-  0&0&0&1&0&0&1&1\\
-  0&0&0&0&1&0&-1&0\\
-  0&0&0&0&0&1&0&-1\\
-  \end{bmatrix}$$)"),
-p(r"(The covariance matrix of all observed scores in vector \(X\), true scores in vector \(T\), and true score differences in vector \(D\) is calculated like so:)"),
-p(r"($$\mathbf{\Sigma}_{XTD}=\mathbf{W}^\prime\mathbf{\Sigma}_{XT}\mathbf{W}$$)"),
-p(r"(From the \(\mathbf{\Sigma}_{XTD}\) matrix, we can select just the portion of pertaining to the true scores and the true score differences in a covariance matrix we can call \(\mathbf{\Sigma}_{TD}\).)"),
-p(r"(Using equations for computing conditional distributions, the means of the true scores and true score differences after controlling for specific observed scores are:)"),
-p(r"($$\mu_{TD|X}=\mu_X+\mathbf{\Sigma}_{TD}\mathbf{\Sigma}_X^{-1}\left(X-\mu_X\right)$$)"),
-p(r"(Likewise, the covariance matrix of the true scores and true score differences after controlling for specific observed scores is:)"),
-p(r"($$\mathbf{\Sigma}_{TD|X}=\mathbf{\Sigma}_{TD}-\mathbf{\Sigma}_{TD}\mathbf{\Sigma}_X^{-1}\mathbf{\Sigma}_{TD}^\prime$$)"),
-p(r"(To calculate the multivariate conditional PPV, we specify a multivariate normal distribution for the conditional true scores: \(\mathcal{N}\left(\mu_{TD|X},\ \mathbf{\Sigma}_{TD|X}\right)\). Then we evaluate the cumulative distribution function of the multivariate normal distribution with lower bounds at the diagnostic thresholds for \(G\), \(G-S\), and \(G-A\) and upper bounds at the diagnostic thresholds for \(S\) and \(A\).)")
-)))),
-))
+    ),
 
-# Define server logic required to draw a histogram
+    # Show a plot of the generated distribution
+    mainPanel(
+      width = 8,
+      htmlOutput("plotwarnings"),
+      tabsetPanel(
+        type = "tabs",
+        tabPanel("Plot",
+                 plotOutput("distPlot")),
+        tabPanel("Model Calculations",
+                 tags$h3("Simplified Model Based on Specified Reliability and Correlation Coefficients"),
+                 htmlOutput("model"),
+          p(
+            em("Note:"),
+            "All observed and true scores are assumed to be multivariate normal."
+          ),
+          p("Most confidence intervals are univariate. The confidence interval for a true score is based on a single observed score. Specific Learning Disability is a multivariate construct that requires thinking about multivariate confidence intervals."),
+          withMathJax(
+            p(
+              r"(Suppose that observed scores \(G\), \(S\), and \(A\) have reliability coefficients of \(r_{GG}\), \(r_{SS}\), and \(r_{AA}\), respectively. Their respective true scores are \(g\), \(s\), and \(a\). We can represent the three observed scores as a vector \(X=\left\{G,S,A\right\}\), the true scores as vector \(T=\left\{g,s,a\right\}\), and the true score differences as \(D=\left\{g-s,g-a\right\}\). The covariance matrix of the observed scores is:)"
+            ),
+            p(
+              r"($$\mathbf{\Sigma}_X=\left[
+              \begin{matrix}\sigma_G^2&\sigma_{GS}&\sigma_{GA}\\
+              \sigma_{GS}&\sigma_S^2&\sigma_{SA}\\
+              \sigma_{GA}&\sigma_{SA}&\sigma_A^2\\
+              \end{matrix}\right]$$)"
+            ),
+            p(
+              "The covariance matrix of the true scores is the same as that of the observed score covariance matrix except that the true score variances are equal to the observed variances multiplied by the appropriate reliability coefficient:"
+            ),
+            p(
+              r"($$\mathbf{\Sigma}_T=
+              \begin{bmatrix}
+              r_{GG}\sigma_G^2 & \sigma_{GS} & \sigma_{GA}\\
+              \sigma_{GS} & r_{SS}\sigma_S^2 & \sigma_{SA}\\
+              \sigma_{GA} & \sigma_{SA} & r_{AA}\sigma_A^2
+              \end{bmatrix}$$)"
+            ),
+            p(
+              r"(Because the matrix of covariances between the observed and true scores is the same as the true score covariance matrix, the combined covariance matrix is:)"
+            ),
+            p(
+              r"($$\mathbf{\Sigma}_{XT}=\left[\begin{matrix}\mathbf{\Sigma}_X&\mathbf{\Sigma}_T\\
+              \mathbf{\Sigma}_T&\mathbf{\Sigma}_T\\
+              \end{matrix}\right]$$)"
+            ),
+            p(
+              r"(To create the covariance matrix that includes the variances and covariances of true score differences \(g-s\) and \(g-a\), we create a weight matrix \(\boldsymbol{W}\):)"
+            ),
+            p(
+              r"($$\mathbf{W}=\begin{matrix}
+              \begin{matrix}\color{gray}G & \color{gray}S & \color{gray}A & \color{gray}g & \color{gray}s & \color{gray}a & \color{gray}g\color{gray}-\color{gray}a & \color{gray}g\color{gray}-\color{gray}s \phantom{-}\end{matrix}\\
+              \begin{bmatrix}
+              1&0&0&0&0&0&\phantom{-}0\phantom{-}&\phantom{-}0\\
+              0&1&0&0&0&0&\phantom{-}0\phantom{-}&\phantom{-}0\\
+              0&0&1&0&0&0&\phantom{-}0\phantom{-}&\phantom{-}0\\
+              0&0&0&1&0&0&\phantom{-}1\phantom{-}&\phantom{-}1\\
+              0&0&0&0&1&0&-1\phantom{-}&\phantom{-}0\\
+              0&0&0&0&0&1&\phantom{-}0\phantom{-}&-1\\
+              \end{bmatrix} \begin{matrix}\color{gray}G\\ \color{gray}S\\ \color{gray}A\\ \color{gray}g\\ \color{gray}s\\ \color{gray}a\\\end{matrix}\end{matrix}$$)"
+            ),
+            p(
+              r"(The covariance matrix of all observed scores in vector \(X\), true scores in vector \(T\), and true score differences in vector \(D\) is calculated like so:)"
+            ),
+            p(
+              r"($$\mathbf{\Sigma}_{XTD}=\mathbf{W}^\prime\mathbf{\Sigma}_{XT}\mathbf{W}$$)"
+            ),
+            p(
+              r"(From the \(\mathbf{\Sigma}_{XTD}\) matrix, we can select just the portion of pertaining to the true scores and the true score differences in a covariance matrix we can call \(\mathbf{\Sigma}_{TD}\).)"
+            ),
+            p(
+              r"(Using equations for computing conditional distributions, the means of the true scores and true score differences after controlling for specific observed scores are:)"
+            ),
+            p(
+              r"($$\mu_{TD|X}=\mu_X+\mathbf{\Sigma}_{TD}\mathbf{\Sigma}_X^{-1}\left(X-\mu_X\right)$$)"
+            ),
+            p(
+              r"(Likewise, the covariance matrix of the true scores and true score differences after controlling for specific observed scores is:)"
+            ),
+            p(
+              r"($$\mathbf{\Sigma}_{TD|X}=\mathbf{\Sigma}_{TD}-\mathbf{\Sigma}_{TD}\mathbf{\Sigma}_X^{-1}\mathbf{\Sigma}_{TD}^\prime$$)"
+            ),
+            p(
+              r"(To calculate the multivariate conditional PPV, we specify a multivariate normal distribution for the conditional true scores: \(\mathcal{N}\left(\mu_{TD|X},\ \mathbf{\Sigma}_{TD|X}\right)\). Then we evaluate the cumulative distribution function of the multivariate normal distribution with lower bounds at the diagnostic thresholds for \(G\), \(G-S\), and \(G-A\) and upper bounds at the diagnostic thresholds for \(S\) and \(A\).)"
+            )
+          )
+        )
+      )
+    ),
+  )
+)
+
+# Server logic ----
 server <- function(input, output) {
     plotstuff <- shiny::reactive({
       make_conditional_ppv_plot(
@@ -1571,58 +1344,12 @@ server <- function(input, output) {
           input$sacor,
           0.6)
       )
-
-
-
-        # myplot(
-        #     x = c(
-        #         ifelse(
-        #             is.numeric(input$generalAbility),
-        #             input$generalAbility,
-        #             100
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$specificAbility),
-        #             input$specificAbility,
-        #             100
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$academicAbility),
-        #             input$academicAbility,
-        #             100
-        #         )
-        #     ),
-        #     threshold = input$threshold,
-        #     rxx = c(
-        #         ifelse(
-        #             is.numeric(input$generalReliability),
-        #             input$generalReliability,
-        #             0
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$specificReliability),
-        #             input$specificReliability,
-        #             0
-        #         ),
-        #         ifelse(
-        #             is.numeric(input$academicReliability),
-        #             input$academicReliability,
-        #             0
-        #         )
-        #     ),
-        #     buffer = input$buffer
-        # )
     })
 
-    # output$ppv_label = renderText(plotstuff()[["ppv_label"]])
-    # output$pbuffer_label <-
-    #     renderText(plotstuff()[["pbuffer_label"]])
-
-    # output$ppv <- renderText(plotstuff()[["ppv"]])
-    # output$pbuffer <- renderText(plotstuff()[["pbuffer"]])
 
     output$distPlot <- renderPlot(plotstuff()[["plot"]], height = 800)
     output$model <- renderText(plotstuff()[["model"]])
+    output$plotwarnings <- renderText(plotstuff()[["plot_warnings"]])
 
 }
 ggplot2::theme_set(ggplot2::theme_minimal(base_size = 18))
