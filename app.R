@@ -4,12 +4,7 @@
 #
 
 library(shiny)
-library(dplyr)
-library(ggplot2)
-library(purrr)
-library(forcats)
-library(stringr)
-library(tibble)
+library(tidyverse)
 library(scales)
 library(ggdist)
 library(ggtext)
@@ -24,7 +19,7 @@ library(mvtnorm)
 library(condMVNorm)
 
 # Options
-options(shiny.usecairo = T, # use Cairo device for better antialiasing
+options(shiny.usecairo = F, # use Cairo device for better antialiasing
         scipen = 999 # Do not use scientific notation
         )
 
@@ -40,6 +35,34 @@ remove_leading_zero <- function(x, digits = 2) {
     x1[digits - ceiling(log10(abs(x))) > 6] <- ".000000"
     x1
 }
+
+# Regression from matrix
+lm_matrix <- function(
+  R, ind, dep,
+  X = NA,
+  mu_y = 100,
+  sigma_y = 15,
+  mu_x = c(100, 100),
+  sigma_x = c(15, 15)) {
+  R <- R[c(dep, ind), c(dep, ind), drop = F]
+  Rxx <- R[ind, ind, drop = F]
+  iR <- solve(Rxx)
+  Rxy <- R[ind, dep, drop = F]
+  b <- iR %*% Rxy
+  R2 <- 1 - det(R) / det(Rxx)
+  ll <- list(b = b,
+             R2 = R2,
+             see = sigma_y * sqrt(1 - R2),
+             ind = ind,
+             dep = dep)
+  if (length(X) > 1) {
+    ll$yhat <- mu_y  + ((X[ind] - mu_x) %*% b)[1,1]
+    ll$p <- pnorm((X[dep] - ll$yhat) / ll$see)
+  }
+
+  ll
+}
+
 
 # Round to significant digits for near 0 and near 1
 proportion_round <- function(p, digits = 2) {
@@ -127,9 +150,9 @@ split_width <- c("50%", "50%")
 
 # Main plot ----
 make_conditional_ppv_plot <- function(
-  General = 100,
-  Specific = 85,
-  Academic = 70,
+  General = 110,
+  Specific = 70,
+  Academic = 85,
   # Reliability
   r_gg = 0.97,
   r_ss = 0.92,
@@ -172,18 +195,22 @@ make_conditional_ppv_plot <- function(
                              gscor, 1, sacor,
                              gacor, sacor, 1), nrow = 3)
 
+  dimnames(m_observed_cov) <- list(v_observed, v_observed)
+
   m_true_cov <- m_observed_cov
 
   diag(m_true_cov) <- r_xx
+  dimnames(m_true_cov) <- list(v_true, v_true)
+
   m_cov <- rbind(cbind(m_true_cov, m_true_cov),
                  cbind(m_true_cov, m_observed_cov))
 
-    colnames(m_cov) <- v_names
+  colnames(m_cov) <- v_names
   rownames(m_cov) <- v_names
 
 
   if (det(m_cov) <= 0) stop(
-    "This combination of reliability and correlation coefficents is mathematically impossible. Try altering one or more coefficient."
+    "This combination of reliability and correlation coefficents is mathematically impossible. Try altering one or more coefficients."
     )
 
   cov_all <- m_cov * sigma ^ 2
@@ -194,7 +221,8 @@ make_conditional_ppv_plot <- function(
   # Cross covariances
   cov_true_observed <-  cov_all[v_true, v_observed]
 
-  b_s.g <- (solve(m_true_cov[1,1,drop = F]) %*% m_true_cov[1,2,drop = F])[1,1]
+  m_s.g <- lm_matrix(m_true_cov, "g", dep = "s")
+  b_s.g <- m_s.g$b[1,1]
 
 
   plot_warnings <- ""
@@ -207,9 +235,9 @@ make_conditional_ppv_plot <- function(
       "<br> This is an unlikely value for ability data.</li>")
 
 
-  b_a <- (solve(m_true_cov[c(1,2),c(1,2),drop = F]) %*% m_true_cov[c(1,2),3,drop = F])[,1]
-  b_a.g <- b_a[1]
-  b_a.s <- b_a[2]
+  m_a.gs <- lm_matrix(m_true_cov, ind = c("g", "s"), dep = "a")
+  b_a.g <- m_a.gs$b["g","a"]
+  b_a.s <- m_a.gs$b["s", "a"]
 
   b_a.g_neg <- b_a.g < 0
 
@@ -574,19 +602,6 @@ make_conditional_ppv_plot <- function(
       size = ggtext_size(16),
       family = myfont
     ) +
-    # annotate(
-    #   x = mean(c(threshold,
-    #              threshold + buffer)),
-    #   y = c(1,2,3),
-    #   vjust = 0.5,
-    #   hjust = -0.06,
-    #   label = paste0("SLD-Possible"),
-    #   geom = "text",
-    #   color = tinter::darken(mycols["Buffer"], amount = .5),
-    #   angle = 90,
-    #   size = ggtext_size(14),
-    #   family = myfont
-    # ) +
     annotate(
       x = threshold + buffer + 1,
       y = 4,
@@ -609,16 +624,6 @@ make_conditional_ppv_plot <- function(
       size = ggtext_size(16),
       family = myfont
     ) +
-    # geom_label(
-    #   aes(label = rxx_display, x = 27.25, y = as.numeric(Ability) +  -0.1),
-    #   hjust = 0.5,
-    #   vjust = 0.5,
-    #   parse = T,
-    #   family = myfont,
-    #   label.padding = unit(0, "lines"),
-    #   label.size = 0,
-    #   color = "gray30"
-    # ) +
     ggtitle(
       paste0(
         'Probability all true scores meet **<span style="color:',
@@ -653,7 +658,7 @@ make_conditional_ppv_plot <- function(
       "General -\nSpecific\nDifference",
       "General -\nAcademic\nDifference"
     ),
-    symbol = c("g - s", "g - a")
+    symbol = c("g − s", "g − a")
   ) %>%
     mutate(
       Score = c(General - Specific, General - Academic),
@@ -811,10 +816,182 @@ make_conditional_ppv_plot <- function(
   # Join plots
   gp <- (gp1 / gp2 + patchwork::plot_layout(heights = c(2.1, 1)))
 
-  # Return list ----
+  # Observed Regressions ----
+
+  m_S.G <- lm_matrix(m_observed_cov, ind = "G", dep = "S", X = x_SS)
+  m_A.G <- lm_matrix(m_observed_cov, ind = "G", dep = "A", X = x_SS)
+  m_A.GS <- lm_matrix(m_observed_cov, ind = c("G", "S"), dep = "A", X = x_SS)
+
+  plot_conditional <-
+    tibble(dist = rep("norm", 6),
+         Group = factor(c("General\nAbility", "Specific\nAbility", "Academic\nAbility",
+                          "Specific\nAbility", "Academic\nAbility", "Academic\nAbility")) %>%
+           fct_inorder() %>%
+           fct_rev(),
+         SS = c(x_SS, rep(NA,3)),
+         SS_label = c(paste0('<span style="font-size:12pt">P(*G* &le; ',
+                             General,
+                             ") = ",
+                             prob_label(pnorm(General, 100, 15), digits = 2),
+                             '</span><br>',
+                             General),
+                      paste0('<span style="font-size:12pt">P(*S* &le; ',
+                             Specific,
+                             " | *G* = ",
+                             General,
+                             ") = ",
+                             prob_label(m_S.G$p, digits = 2),
+                             "<br>P(*S* &le; ",
+                             Specific,
+                             ") = ",
+                             prob_label(pnorm(Specific, 100, 15), digits = 2),
+                             '</span><br>',
+                             Specific),
+                      paste0('<span style="font-size:12pt">',
+                             "P(*A* &le; ",
+                             Academic,
+                             ") = ",
+                             prob_label(pnorm(Academic, 100, 15), digits = 2),
+                             "<br>P(*A* &le; ",
+                             Academic,
+                             " | *G* = ",
+                             General,
+                             ") = ",
+                             prob_label(m_A.G$p, digits = 2),
+                             "<br>P(*A* &le; ",
+                             Academic,
+                             " | *G* = ",
+                             General,
+                             ", *S* = ",
+                             Specific,
+                             ") = ",
+                             prob_label(m_A.GS$p, digits = 2),
+                             '</span><br>',
+                             Academic), NA, NA, NA),
+         eq = c(
+           paste0("*G* ~ N(100, 15<sup>2</sup>)"),
+           paste0("*S* ~ N(100, 15<sup>2</sup>)"),
+           paste0("*A* ~ N(100, 15<sup>2</sup>)"),
+           paste0("*S* | *G* ~ N(", formatC(m_S.G$yhat, 2, format = "f"),
+                       ", ",
+                       formatC(m_S.G$see, 2, format = "f"),
+                       "<sup>2</sup>)"),
+                paste0("*A* | *G* ~ N(", formatC(m_A.G$yhat, 2, format = "f"),
+                       ", ",
+                       formatC(m_A.G$see, 2, format = "f"),
+                       "<sup>2</sup>)"),
+                paste0("*A* | *G*, *S* ~ N(", formatC(m_A.GS$yhat, 2, format = "f"),
+                       ", ",
+                       formatC(m_A.GS$see, 2, format = "f"),
+                       "<sup>2</sup>)")),
+         fill = tinter::lighten(c(mycolors[1], mycolors[2], mycolors[3],
+                  mycolors[1], mycolors[1], mycolors[2]), .65),
+         height = c(rep(.85, 3), 0.70, 0.70, 0.55),
+         mu = c(rep(100, 3), m_S.G$yhat, m_A.G$yhat, m_A.GS$yhat),
+         sigma = c(rep(15, 3), m_S.G$see, m_A.G$see, m_A.GS$see)) %>%
+    mutate(row_id = row_number()) %>%
+    ggplot(aes(y = Group)) +
+    stat_dist_halfeye(
+      normalize = "groups",
+      limits = c(40, 160),
+      aes(
+        dist = dist,
+        group = rev(row_id),
+        arg1 = mu,
+        arg2 = sigma,
+        scale = height,
+        fill = fill
+        ),
+      show_interval = F,
+      alpha = .9, color = NA
+    ) +
+    geom_point(aes(x = SS), data = . %>% filter(!is.na(SS))) +
+    geom_richtext(aes(x = SS,
+                      label = SS_label,
+                      hjust = ifelse(SS < 55, 0, ifelse(SS > 145, 1, 0.5))),
+                  vjust = 0,
+                  label.color = NA,
+                  fill = NA, size = ggtext_size(18),
+                  family = "Roboto Condensed",
+                  data = . %>% filter(!is.na(SS))) +
+    geom_richtext(aes(x = mu, label = eq,
+                      y = as.numeric(Group) + height),
+                  vjust = 0.1,
+                  label.color = NA,
+                  fill = NA,
+                  label.margin = unit(1, "mm"),
+                  lineheight = 1.5,
+                  size = ggtext_size(14),
+                  family = "Roboto Condensed") +
+    scale_x_continuous(NULL, limits = c(40, 160),
+                       breaks = seq(40, 160, 15),
+                       minor_breaks = seq(40, 160, 5)) +
+    scale_y_discrete(NULL, expand = expansion()) +
+    scale_fill_identity() +
+    # theme_minimal(base_size = 16, base_family = "Roboto Condensed") +
+    theme(axis.text.y = element_text(vjust = 0, hjust = 0.5 )) +
+    coord_cartesian(clip = "off") +
+    annotate(geom = "richtext",
+             hjust = 0,
+             vjust = 1,
+             x = 40,
+             y = 2.9,
+             label.color = NA,
+             label = paste0(
+               "Relative Risk *S* &le; ",
+               Specific,
+               "<br>when *G* = ",
+               General,
+               "<br>= ",
+               prob_label(m_S.G$p, digits = 2),
+               " / ",
+               prob_label(pnorm(Specific, 100, 15), digits = 2),
+               "<br>= ",
+               formatC(m_S.G$p /  pnorm(Specific, 100, 15), digits = 2))) +
+      annotate(geom = "richtext",
+               hjust = 0,
+               vjust = 1,
+               x = 40,
+               y = 1.9,
+               label.color = NA,
+               label = paste0(
+                 "Relative Risk *A* &le; ",
+                 Specific,
+                 "<br>when *G* = ",
+                 General,
+                 "<br>= ",
+                 prob_label(m_A.G$p, digits = 2),
+                 " / ",
+                 prob_label(pnorm(Academic, 100, 15), digits = 2),
+                 "<br>= ",
+                 formatC(m_S.G$p /  pnorm(Academic, 100, 15), digits = 2))) +
+      annotate(geom = "richtext",
+               hjust = 1,
+               vjust = 1,
+               x = 160,
+               y = 1.9,
+               label.color = NA,
+               label = paste0(
+                 "Relative Risk *A* &le; ",
+                 Specific,
+                 " when<br>*G* = ",
+                 General,
+                 " and *S* = ",
+                 Specific,
+                 "<br>= ",
+                 prob_label(m_A.GS$p, digits = 2),
+                 " / ",
+                 prob_label(m_A.G$p, digits = 2),
+                 "<br>= ",
+                 formatC(m_A.GS$p /  m_A.G$p, digits = 2)))
+
+
+
+# Return list ----
   list(
     plot = gp,
     plot_warnings = plot_warnings,
+    plot_conditional = plot_conditional,
     model = paste0('
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="0 0 376.93 237" version="1.1">
@@ -1186,13 +1363,13 @@ ui <- fixedPage(
 
     ),
 
-    # Show a plot of the generated distribution
+    # Main Panel ----
     mainPanel(
       width = 8,
       htmlOutput("plotwarnings"),
       tabsetPanel(
         type = "tabs",
-        tabPanel("Plot",
+        tabPanel("Main Plot",
                  plotOutput("distPlot")),
         tabPanel("Model Calculations",
                  tags$h3("Simplified Model Based on Specified Reliability and Correlation Coefficients"),
@@ -1269,10 +1446,14 @@ ui <- fixedPage(
               r"($$\mathbf{\Sigma}_{TD|X}=\mathbf{\Sigma}_{TD}-\mathbf{\Sigma}_{TD}\mathbf{\Sigma}_X^{-1}\mathbf{\Sigma}_{TD}^\prime$$)"
             ),
             p(
-              r"(To calculate the multivariate conditional PPV, we specify a multivariate normal distribution for the conditional true scores: \(\mathcal{N}\left(\mu_{TD|X},\ \mathbf{\Sigma}_{TD|X}\right)\). Then we evaluate the cumulative distribution function of the multivariate normal distribution with lower bounds at the diagnostic thresholds for \(G\), \(G-S\), and \(G-A\) and upper bounds at the diagnostic thresholds for \(S\) and \(A\).)"
+              r"(To calculate the multivariate conditional positive predictive value, we specify a multivariate normal distribution for the conditional true scores: $$\mathcal{N}\!\left(\mu_{TD|X},\ \mathbf{\Sigma}_{TD|X}\right)$$)"),
+            p(r"(Then we evaluate the cumulative distribution function of the multivariate normal distribution with lower bounds at the diagnostic thresholds for \(G\), \(G-S\), and \(G-A\) and upper bounds at the diagnostic thresholds for \(S\) and \(A\).)"
             )
           )
-        )
+        ),
+        tabPanel("Conditional Distribution Plot",
+                 h3("Conditional Distributions of Scores, Given Predictors"),
+                 plotOutput("plotconditional"))
       )
     ),
   )
@@ -1350,6 +1531,7 @@ server <- function(input, output) {
     output$distPlot <- renderPlot(plotstuff()[["plot"]], height = 800)
     output$model <- renderText(plotstuff()[["model"]])
     output$plotwarnings <- renderText(plotstuff()[["plot_warnings"]])
+    output$plotconditional <- renderPlot(plotstuff()[["plot_conditional"]], height = 700)
 
 }
 ggplot2::theme_set(ggplot2::theme_minimal(base_size = 18))
