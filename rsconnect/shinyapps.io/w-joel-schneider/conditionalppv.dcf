@@ -5,10 +5,10 @@ account: w-joel-schneider
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 4284652
-bundleId: 5630634
+bundleId: 5651797
 url: https://w-joel-schneider.shinyapps.io/conditionalppv/
-when: 1646174339.29353
-lastSyncTime: 1646174339.29353
+when: 1646661585.03778
+lastSyncTime: 1646661585.03778
 asMultiple: FALSE
 asStatic: FALSE
 ignoredFiles: generativemodel.svg|README.md|tests/shinytest.R

@@ -17,13 +17,86 @@ library(viridis)
 library(patchwork)
 library(mvtnorm)
 library(condMVNorm)
+library(rgl)
 
 # Options
-options(shiny.usecairo = F, # use Cairo device for better antialiasing
+options(shiny.usecairo = T, # use Cairo device for better antialiasing
         scipen = 999 # Do not use scientific notation
         )
 
 # Helper functions ----
+
+
+cor_ellipse <- function(r = 0,
+         mean = c(0,0),
+         sd = c(1,1),
+         p = 0.95,
+         split_x = NULL,
+         split_y = NULL,
+         n_points = 1000) {
+
+  sigma <- diag(sd) %*% matrix(c(1,r,r,1),2,2) %*% diag(sd)
+  eigen.info <- eigen(sigma)
+
+  theta <- atan(eigen.info$vectors[1] / eigen.info$vectors[2])
+  lengths <- sqrt(eigen.info$values * stats::qchisq(p, 2))
+  a = lengths[1]
+  b = lengths[2]
+  t = seq(0,2 * pi, length.out = n_points)
+
+  d <- data.frame(
+    y = a * cos(theta) * cos(t) - b * sin(theta) * sin(t) + mean[2],
+    x = a * sin(theta) * cos(t) + b * cos(theta) * sin(t) + mean[1]
+  )
+
+  if (!is.null(split_x) & !is.null(split_y)) {
+    lx <- d$x < split_x
+    ly <- d$y < split_y
+    ux <- d$x >= split_x
+    uy <- d$y >= split_y
+
+    d[ux & uy, "group"] <- "1"
+    d[lx & uy, "group"] <- "2"
+    d[ux & ly, "group"] <- "4"
+    d[lx & ly, "group"] <- "3"
+
+    d1 <- d
+    d1[d1$group != "1", "x"] <- min(d1[d1$group == "1", "x"])
+    d1[d1$group != "1", "y"] <- min(d1[d1$group == "1", "y"])
+    d1$group = "1"
+    d1 <- unique(d1)
+
+    d2 <- d
+    d2[d2$group != "2", "x"] <- max(d2[d2$group == "2", "x"])
+    d2[d2$group != "2", "y"] <- min(d2[d2$group == "2", "y"])
+    d2$group = "2"
+    d2 <- unique(d2)
+
+    d3 <- d
+    d3[d3$group != "3", "x"] <- max(d3[d3$group == "3", "x"])
+    d3[d3$group != "3", "y"] <- max(d3[d3$group == "3", "y"])
+    d3$group = "3"
+    d3 <- unique(d3)
+
+    d4 <- d
+    d4[d4$group != "4", "x"] <- min(d4[d4$group == "4", "x"])
+    d4[d4$group != "4", "y"] <- max(d4[d4$group == "4", "y"])
+    d4$group = "4"
+    d4 <- unique(d4)
+    d <- rbind(d1,d2,d3, d4)
+  }
+
+
+  if (!is.null(split_x) & is.null(split_y)) {
+    d[,"group"] <- as.character((d$x < split_x) + 1)
+  }
+
+  if (is.null(split_x) & !is.null(split_y)) {
+    d[,"group"] <- as.character((d$y < split_y) + 1)
+  }
+
+  d
+}
 
 # Remove leading zero for display of proportions
 remove_leading_zero <- function(x, digits = 2) {
@@ -131,9 +204,9 @@ ggtext_size <- function(base_size, ratio = 0.8) {
 # Constants ----
 
 # SLD colors
-mycolors <- c(SLD = "#482576",
+mycolors <- c(SLD = "#43BF71",
               Buffer = "#35608D",
-              NotSLD = "#43BF71")
+              NotSLD = "#482576")
 
 # Not sure why this is needed, but it is.
 mycolours <- mycolors
@@ -160,7 +233,7 @@ make_conditional_ppv_plot <- function(
   # Thresholds
   threshold_s = 85,
   threshold_a = 85,
-  threshold_g = 90,
+  threshold_g = 85,
   buffer = 5,
   meaningful_difference = 10,
   gscor = .6, # Corelation of G and S
@@ -184,8 +257,16 @@ make_conditional_ppv_plot <- function(
   v_observed <- c("G", "S", "A")
   v_names <- c(v_true, v_observed)
   decision_labels <- c("SLD-Unlikely",
-                       "SLD-Possible",
+                       "Buffer",
                        "SLD-Likely")
+
+  # Thresholds
+  tr_s <- threshold_s + buffer
+  ts_s <- threshold_s
+  tr_a <- threshold_a + buffer
+  ts_a <- threshold_a
+  tr_g <- threshold_g
+  ts_g <- threshold_g + buffer
 
   # Reliability
   r_xx <- c(r_gg, r_ss, r_aa)
@@ -201,6 +282,8 @@ make_conditional_ppv_plot <- function(
 
   diag(m_true_cov) <- r_xx
   dimnames(m_true_cov) <- list(v_true, v_true)
+
+  m_true_cor <- cov2cor(m_true_cov)
 
   m_cov <- rbind(cbind(m_true_cov, m_true_cov),
                  cbind(m_true_cov, m_observed_cov))
@@ -313,16 +396,18 @@ make_conditional_ppv_plot <- function(
   multivariate_mu <- cond_mu_sigma$condMean[1:3]
   multivariate_see <- sqrt(diag(cond_mu_sigma$condVar)[1:3])
 
-  # Percent meeting strict criteria
+
+
+    # Percent meeting strict criteria
   p_strict <- mvtnorm::pmvnorm(
     lower = c(
-      threshold_g,-Inf,-Inf,
+      ts_g,-Inf,-Inf,
       meaningful_difference,
       meaningful_difference
     ),
     upper = c(Inf,
-              threshold_s,
-              threshold_a,
+              ts_s,
+              ts_a,
               Inf,
               Inf),
     mean = cond_mu_sigma$condMean,
@@ -333,38 +418,19 @@ make_conditional_ppv_plot <- function(
   # Percent meeting relaxed criteria
   p_relaxed <- mvtnorm::pmvnorm(
     lower = c(
-      threshold_g - buffer,-Inf,-Inf,
+      tr_g,-Inf,-Inf,
       meaningful_difference - buffer,
       meaningful_difference - buffer
     ),
     upper = c(Inf,
-              threshold_s + buffer,
-              threshold_a + buffer,
+              tr_s,
+              tr_a,
               Inf,
               Inf),
     mean = cond_mu_sigma$condMean,
     sigma = cond_mu_sigma$condVar,
     keepAttr = F
   )
-
-  p_ga_strict <- mvtnorm::pmvnorm(
-    lower = c(
-      -Inf,
-      -Inf,
-      -Inf,
-      -Inf,
-      meaningful_difference
-    ),
-    upper = c(Inf,
-              Inf,
-              Inf,
-              Inf,
-              Inf),
-    mean = cond_mu_sigma$condMean,
-    sigma = cond_mu_sigma$condVar,
-    keepAttr = F
-  )
-
 
   threshold = threshold_a
 
@@ -638,7 +704,7 @@ make_conditional_ppv_plot <- function(
       subtitle = paste0(
         'Probability all true scores meet **<span style="color:',
         mycols["SLD-Likely"],
-        '">SLD-Likely</span>** criteria or in **<span style="color:',
+        '">SLD-Likely</span>** criteria or are in **<span style="color:',
         mycols["Buffer"],
         '">Buffer</span>**',
         " = ",
@@ -837,14 +903,14 @@ make_conditional_ppv_plot <- function(
                              General),
                       paste0('<span style="font-size:12pt">P(*S* &le; ',
                              Specific,
+                             ") = ",
+                             prob_label(pnorm(Specific, 100, 15), digits = 2),
+                             "<br>P(*S* &le; ",
+                             Specific,
                              " | *G* = ",
                              General,
                              ") = ",
                              prob_label(m_S.G$p, digits = 2),
-                             "<br>P(*S* &le; ",
-                             Specific,
-                             ") = ",
-                             prob_label(pnorm(Specific, 100, 15), digits = 2),
                              '</span><br>',
                              Specific),
                       paste0('<span style="font-size:12pt">',
@@ -884,13 +950,66 @@ make_conditional_ppv_plot <- function(
                        ", ",
                        formatC(m_A.GS$see, 2, format = "f"),
                        "<sup>2</sup>)")),
-         fill = tinter::lighten(c(mycolors[1], mycolors[2], mycolors[3],
-                  mycolors[1], mycolors[1], mycolors[2]), .65),
+         fill = tinter::lighten(c(mycolors[3], mycolors[2], mycolors[1],
+                  mycolors[3], mycolors[3], mycolors[2]), .65),
          height = c(rep(.85, 3), 0.70, 0.70, 0.55),
          mu = c(rep(100, 3), m_S.G$yhat, m_A.G$yhat, m_A.GS$yhat),
          sigma = c(rep(15, 3), m_S.G$see, m_A.G$see, m_A.GS$see)) %>%
     mutate(row_id = row_number()) %>%
     ggplot(aes(y = Group)) +
+    annotate(geom = "richtext",
+             hjust = 0,
+             vjust = 1,
+             x = 40,
+             y = 2.95,
+             label.color = NA,
+             label = paste0(
+               "Relative Risk<br>that *S* &le; ",
+               Specific,
+               "<br>when *G* = ",
+               General,
+               "<br>= ",
+               prob_label(m_S.G$p, digits = 2),
+               " / ",
+               prob_label(pnorm(Specific, 100, 15), digits = 2),
+               "<br>= ",
+               formatC(m_S.G$p /  pnorm(Specific, 100, 15), digits = 2))) +
+    annotate(geom = "richtext",
+             hjust = 0,
+             vjust = 1,
+             x = 40,
+             y = 1.95,
+             label.color = NA,
+             label = paste0(
+               "Relative Risk<br>that *A* &le; ",
+               Specific,
+               "<br>when *G* = ",
+               General,
+               "<br>= ",
+               prob_label(m_A.G$p, digits = 2),
+               " / ",
+               prob_label(pnorm(Academic, 100, 15), digits = 2),
+               "<br>= ",
+               formatC(m_S.G$p /  pnorm(Academic, 100, 15), digits = 2))) +
+    annotate(geom = "richtext",
+             hjust = 1,
+             vjust = 1,
+             x = 160,
+             y = 1.95,
+             label.color = NA,
+             label = paste0(
+               "Relative Risk<br>that *A* &le; ",
+               Specific,
+               " when<br>*G* = ",
+               General,
+               " and *S* = ",
+               Specific,
+               "<br>= ",
+               prob_label(m_A.GS$p, digits = 2),
+               " / ",
+               prob_label(m_A.G$p, digits = 2),
+               "<br>= ",
+               formatC(m_A.GS$p /  m_A.G$p, digits = 2))) +
     stat_dist_halfeye(
       normalize = "groups",
       limits = c(40, 160),
@@ -901,7 +1020,7 @@ make_conditional_ppv_plot <- function(
         arg2 = sigma,
         scale = height,
         fill = fill
-        ),
+      ),
       show_interval = F,
       alpha = .9, color = NA
     ) +
@@ -929,61 +1048,374 @@ make_conditional_ppv_plot <- function(
     scale_y_discrete(NULL, expand = expansion()) +
     scale_fill_identity() +
     # theme_minimal(base_size = 16, base_family = "Roboto Condensed") +
-    theme(axis.text.y = element_text(vjust = 0, hjust = 0.5 )) +
-    coord_cartesian(clip = "off") +
-    annotate(geom = "richtext",
-             hjust = 0,
-             vjust = 1,
-             x = 40,
-             y = 2.9,
-             label.color = NA,
-             label = paste0(
-               "Relative Risk *S* &le; ",
-               Specific,
-               "<br>when *G* = ",
-               General,
-               "<br>= ",
-               prob_label(m_S.G$p, digits = 2),
-               " / ",
-               prob_label(pnorm(Specific, 100, 15), digits = 2),
-               "<br>= ",
-               formatC(m_S.G$p /  pnorm(Specific, 100, 15), digits = 2))) +
-      annotate(geom = "richtext",
-               hjust = 0,
-               vjust = 1,
-               x = 40,
-               y = 1.9,
-               label.color = NA,
-               label = paste0(
-                 "Relative Risk *A* &le; ",
-                 Specific,
-                 "<br>when *G* = ",
-                 General,
-                 "<br>= ",
-                 prob_label(m_A.G$p, digits = 2),
-                 " / ",
-                 prob_label(pnorm(Academic, 100, 15), digits = 2),
-                 "<br>= ",
-                 formatC(m_S.G$p /  pnorm(Academic, 100, 15), digits = 2))) +
-      annotate(geom = "richtext",
-               hjust = 1,
-               vjust = 1,
-               x = 160,
-               y = 1.9,
-               label.color = NA,
-               label = paste0(
-                 "Relative Risk *A* &le; ",
-                 Specific,
-                 " when<br>*G* = ",
-                 General,
-                 " and *S* = ",
-                 Specific,
-                 "<br>= ",
-                 prob_label(m_A.GS$p, digits = 2),
-                 " / ",
-                 prob_label(m_A.G$p, digits = 2),
-                 "<br>= ",
-                 formatC(m_A.GS$p /  m_A.G$p, digits = 2)))
+    theme(axis.text.y = element_text(vjust = 0, hjust = 0.5 , lineheight = 1.25)) +
+    coord_cartesian(clip = "off")
+
+  # Criteria Plot ----
+
+  # Conditional Correlations
+  cor_conditional <- cov2cor(cov_conditional)
+
+   # Simulated true scores conditioned on observed scores
+  d_sa <-
+    rmvnorm(n = 100,
+            mean = mu_conditional %>%
+              `names<-`(c("g", "s", "a")),
+            sigma = cov_conditional) %>%
+    as_tibble() %>%
+    mutate(
+      sld_l = (g > ts_g) &
+        (s < threshold_s) &
+        (a < threshold_a) &
+        (g > s + meaningful_difference) &
+        (g > a + meaningful_difference),
+      sld_relaxed_l =
+        (g > tr_g)  &
+        (s < threshold_s + buffer) &
+        (a < threshold_a + buffer) &
+        (g > s + meaningful_difference - buffer) &
+        (g > a + meaningful_difference - buffer),
+      decision_l = factor(
+        sld_l + sld_relaxed_l,
+        levels = 0:2,
+        labels = decision_labels
+      )
+    )
+
+
+
+
+  ## General and Specific ----
+  d_polygon_GS <- bind_rows(
+    tibble(
+      G = c(160, 160, rep(ts_g, length(seq(40, ts_s))), seq(ts_g, 160)),
+      S = c(ts_s, 40, seq(40, ts_s), rep(ts_s, length(seq(ts_g, 160)))),
+      decision_o = "SLD-Likely") %>%
+      dplyr::filter(G - S >= meaningful_difference),
+    tibble(
+      G = c(rep(ts_g, length(seq(40, ts_s))), seq(ts_g, 160)),
+      S = c(seq(40, ts_s), rep(ts_s, length(seq(ts_g, 160)))),
+      decision_o = "Buffer") %>%
+      dplyr::filter(G - S >= meaningful_difference),
+    tibble(
+      G = c(seq(160, tr_g), rep(tr_g, length(seq(tr_s, 40)))),
+      S = c(rep(tr_s, length(seq(160, tr_g))), seq(tr_s, 40)),
+      decision_o = "Buffer") %>%
+      dplyr::filter(G - S >= meaningful_difference - buffer),
+    tibble(G = c(rep(tr_g, length(seq(40, tr_s))), seq(tr_g, 160)),
+           S = c(seq(40, tr_s), rep(tr_s, length(seq(tr_g, 160)))),
+           decision_o = "SLD-Unlikely") %>%
+      dplyr::filter(G - S >= meaningful_difference - buffer) %>%
+      add_row(G = c(160, 40, 40),
+              S = c(160, 160, 40),
+              decision_o = "SLD-Unlikely")
+  ) %>%
+    mutate(decision_o = factor(decision_o, levels = decision_labels))
+
+
+  plot_GS <- ggplot(d_polygon_GS, aes(S, G)) +
+    geom_polygon(data = cor_ellipse(gscor,
+                                    mean = c(100, 100),
+                                    sd = c(15,15),
+                                    p = .95),
+                 aes(x = x, y = y), alpha = .2)  +
+    geom_polygon(aes(fill = decision_o), alpha = 0.3) +
+    # geom_point(pch = 16, size = 0.2, alpha = 0.2) +
+    geom_text(data = tibble(
+      S = 41,
+      G = c(tr_g - buffer / 2, ts_g - buffer / 2, ts_g + buffer / 2),
+      label = (decision_labels)),
+      size = ggtext_size(b_size),
+      hjust = 0,
+      family = myfont,
+      aes(label = label)) +
+    scale_x_continuous("Specific Ability",
+                       breaks = seq(40, 160, 10),
+                       expand = expansion()) +
+    scale_y_continuous("General Ability",
+                       breaks = seq(40, 160, 10),
+                       expand = expansion()) +
+    theme_minimal(base_size = 18, base_family = myfont) +
+    coord_equal(xlim = c(40, 160), ylim = c(40, 160)) +
+    scale_fill_viridis_d(begin = viridis_start,
+                         end = viridis_end) +
+    theme(legend.position = "none",
+          axis.title.x = element_blank(),
+          axis.text.x = element_blank())
+  # plot_GS
+
+  ## General and Academic ----
+
+  d_polygon_GA <- bind_rows(
+    tibble(
+      G = c(160, 160, rep(ts_g, length(seq(40, ts_a))), seq(ts_a, 160)),
+      A = c(ts_a, 40, seq(40, ts_a), rep(ts_a, length(seq(ts_a, 160)))),
+      decision_o = "SLD-Likely") %>%
+      dplyr::filter(G - A >= meaningful_difference),
+    tibble(
+      G = c(rep(ts_g, length(seq(40, ts_a))), seq(ts_a, 160)),
+      A = c(seq(40, ts_a), rep(ts_a, length(seq(ts_a, 160)))),
+      decision_o = "Buffer") %>%
+      dplyr::filter(G - A >= meaningful_difference),
+    tibble(
+      G = c(seq(160, tr_g), rep(tr_g, length(seq(tr_a, 40)))),
+      A = c(rep(tr_a, length(seq(160, tr_g))), seq(tr_a, 40)),
+      decision_o = "Buffer") %>%
+      dplyr::filter(G - A >= meaningful_difference - buffer),
+    tibble(G = c(rep(tr_g, length(seq(40, tr_a))), seq(tr_g, 160)),
+           A = c(seq(40, tr_a), rep(tr_a, length(seq(tr_g, 160)))),
+           decision_o = "SLD-Unlikely") %>%
+      dplyr::filter(G - A >= meaningful_difference - buffer) %>%
+      add_row(G = c(160, 40, 40),
+              A = c(160, 160, 40),
+              decision_o = "SLD-Unlikely")
+  ) %>%
+    mutate(decision_o = factor(decision_o, levels = decision_labels))
+
+
+
+  plot_GA <- ggplot(d_polygon_GA, aes(G, A)) +
+    geom_polygon(data = cor_ellipse(gacor,
+                                    mean = c(100, 100),
+                                    sd = c(15,15),
+                                    p = .95),
+                 aes(x = x, y = y), alpha = .2)  +
+    geom_polygon(aes(fill = decision_o), alpha = 0.3) +
+    # geom_point(pch = 16, size = 0.2, alpha = 0.2) +
+    geom_text(data = tibble(G = c(159, 159, 159),
+                            A = c(tr_a + buffer / 2,
+                                  ts_a + buffer / 2,
+                                  ts_a - buffer / 2),
+                            label = (decision_labels)),
+              size = ggtext_size(b_size),
+              hjust = 1,
+              family = myfont,
+              aes(label = label)) +
+    scale_x_continuous("General Ability",
+                       breaks = seq(40, 160, 10),
+                       expand = expansion()) +
+    scale_y_continuous("Academic Ability",
+                       breaks = seq(40, 160, 10),
+                       expand = expansion()) +
+    theme_minimal(base_size = 18, base_family = myfont) +
+    coord_equal(xlim = c(40, 160), ylim = c(40, 160)) +
+    scale_fill_viridis_d(begin = viridis_start,
+                         end = viridis_end) +
+    theme(legend.position = "none",
+          axis.title.y = element_blank(),
+          axis.text.y = element_blank())
+
+
+
+
+  ## Specific and Academic ----
+  d_polygon_SA <- tibble(
+    S = c(
+      40, 40, 160, 160, tr_s, tr_s, 40,
+      40, tr_s, tr_s, ts_s, ts_s, 40,
+      40, 40, ts_s, ts_s),
+    A = c(40, 160, 160, 40, 40, tr_a, tr_a,
+          tr_a,tr_a,40,40,ts_a,ts_a,
+          40,ts_a,ts_a,40),
+    decision_o = factor(
+      c(rep("SLD-Unlikely", 7),
+        rep("Buffer", 6),
+        rep("SLD-Likely", 4)),
+      levels = decision_labels))
+
+
+
+  plot_SA <- ggplot(d_polygon_SA, aes(S, A)) +
+    geom_polygon(data = cor_ellipse(sacor,
+                                    mean = c(100, 100),
+                                    sd = c(15,15),
+                                    p = .95),
+                 aes(x = x, y = y), alpha = .2)  +
+    geom_polygon(data = ,
+                 aes(fill = decision_o), alpha = 0.3) +
+    # geom_point(pch = 16, size = 0.2, alpha = 0.2) +
+    geom_text(data = tibble(
+      S = 41,
+      A = c(tr_a + buffer / 2,
+            ts_a + buffer / 2,
+            ts_a - buffer / 2),
+      label = decision_labels),
+      size = ggtext_size(b_size),
+      hjust = 0,
+      family = myfont,
+      aes(label = label)) +
+    scale_x_continuous("Specific Ability",
+                       breaks = seq(40, 160, 10),
+                       expand = expansion()) +
+    scale_y_continuous("Academic Ability",
+                       breaks = seq(40, 160, 10),
+                       expand = expansion()) +
+    theme_minimal(base_size = 18, base_family = myfont) +
+    coord_equal(xlim = c(40, 160), ylim = c(40, 160)) +
+    scale_fill_viridis_d(begin = viridis_start,
+                         end = viridis_end) +
+    theme(legend.position = "none")
+
+  ## Case-Specific ----
+
+  case_SA <-
+    plot_SA +
+    geom_point(
+      data = d_sa,
+      aes(x = s, y = a),
+      alpha = .3,
+      pch = 16,
+      size = .1
+    )  +
+    scale_color_viridis_d() +
+    geom_polygon(
+      data = cor_ellipse(
+        r = cor_conditional[2, 3],
+        mean = mu_conditional[c(2, 3)],
+        sd = sqrt(diag(cov_conditional)[c(2, 3)]),
+        p = .95
+      ),
+      aes(x = x, y = y),
+      fill = "firebrick4",
+      alpha = .2
+    ) +
+    annotate("point", x = x_SS["S"], y = x_SS["A"]) +
+    annotate(
+      "text",
+      hjust = 1.1,
+      vjust = 1.1,
+      family = myfont,
+      x = x_SS["S"],
+      y = x_SS["A"],
+      label = paste0("(", x_SS["S"], ",", x_SS["A"], ")")
+    )
+  case_GA <- plot_GA +
+    geom_point(
+      data = d_sa,
+      aes(x = g, y = a),
+      alpha = .3,
+      pch = 16,
+      size = .1
+    )   +
+    scale_color_viridis_d() +
+    geom_polygon(
+      d = cor_ellipse(
+        r = cor_conditional[1, 3],
+        mean = mu_conditional[c(1, 3)],
+        sd = sqrt(diag(cov_conditional)[c(1, 3)]),
+        p = .95
+      ),
+      aes(x = x, y = y),
+      fill = "firebrick4",
+      alpha = .2
+    ) +
+    annotate("point", x = x_SS["G"], y = x_SS["A"]) +
+    annotate(
+      "text",
+      hjust = -.1,
+      vjust = 1.1,
+      family = myfont,
+      x = x_SS["G"],
+      y = x_SS["A"],
+      label = paste0("(", x_SS["G"], ",", x_SS["A"], ")")
+    )
+
+  case_GS <-
+    plot_GS +
+    geom_point(
+      data = d_sa,
+      aes(x = s, y = g),
+      alpha = .3,
+      pch = 16,
+      size = 0.1
+    ) +
+    scale_color_viridis_d() +
+    geom_polygon(
+      d = cor_ellipse(
+        r = cor_conditional[2, 1],
+        mean = mu_conditional[c(2, 1)],
+        sd = sqrt(diag(cov_conditional)[c(2, 1)]),
+        p = .95
+      ),
+      aes(x = x, y = y),
+      fill = "firebrick4",
+      alpha = .2
+    ) +
+    annotate(
+      "text",
+      hjust = 1.1,
+      vjust = -0.1,
+      family = myfont,
+      x = x_SS["S"],
+      y = x_SS["G"],
+      label = paste0("(", x_SS["S"], ",", x_SS["G"], ")")
+    ) +
+    annotate("point", x = x_SS["S"], y = x_SS["G"])
+
+  p_case_table <-  tibble::tribble(
+    ~text, ~row, ~col,          ~fill,
+    "SLD-Unlikely",   1L,   1L, "SLD-Unlikely",
+    prob_label(1 - p_relaxed, digits = 2, max_digits = 6),   1L,   2L, "SLD-Unlikely",
+    "1",   1L,   3L, "SLD-Unlikely",
+    "Buffer",   2L,   1L, "Buffer",
+    prob_label(p_relaxed - p_strict, digits = 2, max_digits = 6),   2L,   2L, "Buffer",
+    prob_label(p_relaxed, digits = 2, max_digits = 6),   2L,   3L, "Buffer",
+    "SLD-Likely",   3L,   1L,   "SLD-Likely",
+    prob_label(p_strict, digits = 2, max_digits = 6),   3L,   2L,   "SLD-Likely",
+    prob_label(p_strict, digits = 2, max_digits = 6),   3L,   3L,   "SLD-Likely",
+    "Conditional\nOutcome",   4L,   1L,        "white",
+    "Outcome\nProportion",   4L,   2L,        "white",
+    "Cumulative\nProportion",   4L,   3L,        "white"
+  ) %>%
+    mutate(width = rep(c(40, 40, 40), 4),
+           height = c(rep(90 / 3,9), rep(30,3)),
+           fill = fct_inorder(fill) %>% fct_rev()) %>%
+    group_by(row) %>%
+    mutate(x = 40 + cumsum(width) - width / 2) %>%
+    group_by(col) %>%
+    mutate(y = 40 + cumsum(height) - height / 2) %>%
+    ungroup %>%
+    mutate(text_x = ifelse(col == 1, 43, x),
+           hjust = ifelse(col == 1, 0, 0.5),
+           fontface = ifelse(row == 4, "bold", "plain")) %>%
+    ggplot(aes(x,y)) +
+    geom_tile(aes(width = width, height = height, fill = fill)) +
+    geom_text(aes(x = text_x,
+                  label = text,
+                  hjust = hjust,
+                  fontface = fontface),
+              family = myfont,
+              lineheight = 0.9,
+              size = ggtext_size(13)) +
+    geom_hline(yintercept = c(70, 100, 130), color = "white", size = 0.5) +
+    geom_vline(xintercept = c(80, 120), color = "white", size = 0.5) +
+    theme_void() +
+    theme(legend.position = "none") +
+    scale_fill_manual(values = c("gray85", tinter::lighten(
+      viridis::viridis(n = 3,
+                       begin = viridis_start,
+                       end = viridis_end,
+                       direction = -1),
+      amount = viridis_alpha * 0.8))) +
+    coord_equal() +
+    scale_x_continuous(NULL, expand = expansion()) +
+    scale_y_continuous(NULL, expand = expansion())
+
+
+  width <- 3.85
+
+  plot_criteria <- case_GS +
+    p_case_table +
+    case_SA +
+    case_GA +
+    plot_layout(ncol = 2,
+                nrow = 2,
+                heights = unit(c(width,width), "in"),
+                widths = unit(c(width,width), "in"))
+
+
+
+
 
 
 
@@ -992,6 +1424,20 @@ make_conditional_ppv_plot <- function(
     plot = gp,
     plot_warnings = plot_warnings,
     plot_conditional = plot_conditional,
+    plot_criteria = plot_criteria,
+    General = General,
+    Specific = Specific,
+    Academic = Academic,
+    x_SS = x_SS,
+    cov_conditional = cov_conditional,
+    multivariate_mu = multivariate_mu,
+    cov_observed = cov_observed,
+    threshold = threshold,
+    buffer = buffer,
+    meaningful_difference = meaningful_difference,
+    p_strict = p_strict,
+    p_relaxed = p_relaxed,
+    # rglscene = scene,
     model = paste0('
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="100%" height="100%" viewBox="0 0 376.93 237" version="1.1">
@@ -1176,7 +1622,7 @@ ui <- fixedPage(
     primary = scales::alpha(mycolors[1], alpha = 0.7)
   ),
   titlePanel(
-    "Measurement Error Affects Specific Learning Disability Identification Accuracy"
+    "Accuracy of Specific Learning Disability Identification"
   ),
   sidebarLayout(
     sidebarPanel(
@@ -1203,7 +1649,7 @@ ui <- fixedPage(
               label = NULL,
               min = 40,
               max = 160,
-              value = 100
+              value = 105
             )
           ),
           tags$td(
@@ -1371,13 +1817,22 @@ ui <- fixedPage(
         type = "tabs",
         tabPanel("Main Plot",
                  plotOutput("distPlot")),
+        tabPanel("2D Plot",
+                 plotOutput("plotCriteria", height = "100%"),
+                 textOutput("criterianote")
+        ),
+        tabPanel("3D Plot",
+                 rglwidgetOutput("rglplot", width = 700, height = 700),
+                 tags$p("Use the mouse to move the plot and the scroll buttion to zoom the plot."),
+                 tags$p("Assuming multivariate normality, 95% of individuals have scores contained by the large ellipsoid. Among people with the specified observed scores, 95% of them have true scores contained by the small ellipsoid. Whatever portion (if any) of the small ellipsoid that meets SLD criteria is colored green. Any portion that is in the buffer region is blue, and any portion beyond the buffer is violet.")),
         tabPanel("Model Calculations",
-                 tags$h3("Simplified Model Based on Specified Reliability and Correlation Coefficients"),
+                 tags$h1("Simplified Model Based on Specified Reliability and Correlation Coefficients"),
                  htmlOutput("model"),
           p(
             em("Note:"),
             "All observed and true scores are assumed to be multivariate normal."
           ),
+          h2("Conditional Positive Predictive Values Based on Multivariate Confidence Intervals"),
           p("Most confidence intervals are univariate. The confidence interval for a true score is based on a single observed score. Specific Learning Disability is a multivariate construct that requires thinking about multivariate confidence intervals."),
           withMathJax(
             p(
@@ -1452,7 +1907,8 @@ ui <- fixedPage(
           )
         ),
         tabPanel("Conditional Distribution Plot",
-                 h3("Conditional Distributions of Scores, Given Predictors"),
+                 h3("Conditional Distributions of Observed Scores"),
+                 p("General ability predicts Specific Ability. General and Specific Abilities predict Academic Ability."),
                  plotOutput("plotconditional"))
       )
     ),
@@ -1461,6 +1917,11 @@ ui <- fixedPage(
 
 # Server logic ----
 server <- function(input, output) {
+  options(rgl.useNULL = TRUE)
+  save <- options(rgl.inShiny = TRUE)
+  on.exit(options(save))
+
+
     plotstuff <- shiny::reactive({
       make_conditional_ppv_plot(
         General = ifelse(
@@ -1528,10 +1989,263 @@ server <- function(input, output) {
     })
 
 
+
     output$distPlot <- renderPlot(plotstuff()[["plot"]], height = 800)
+    output$plotCriteria <- renderPlot(plotstuff()[["plot_criteria"]], height = 700)
     output$model <- renderText(plotstuff()[["model"]])
     output$plotwarnings <- renderText(plotstuff()[["plot_warnings"]])
     output$plotconditional <- renderPlot(plotstuff()[["plot_conditional"]], height = 700)
+    output$criterianote <- renderText( paste0(
+      "Assuming multivariate normality, 95% of individuals have scores contained by the large ellipses. Among people with the specified observed scores (General Ability = ",
+      plotstuff()[["General"]],
+      ", Specific Ability = ",
+      plotstuff()[["Specific"]],
+      ", Academic Ability = ",
+      plotstuff()[["Academic"]],
+      "), 95% of them have true scores contained by the small ellipses."))
+
+    output$rglplot <- renderRglwidget({
+      # rgl plot ----
+      plot_rgl <- ({
+        open3d(useNULL = TRUE)
+
+        # print(par3d()$userMatrix)
+
+        rgl.viewpoint(userMatrix = matrix(c(1,0,0,0,
+                                            0,0.34, -.93,0,
+                                            0,.93,.34,0,
+                                            0,0,0,1),
+                                          nrow = 4), fov = 0, zoom = 1.3, theta = 1)
+
+        x_SS <- plotstuff()[["x_SS"]]
+        cov_conditional = plotstuff()[["cov_conditional"]]
+        multivariate_mu = plotstuff()[["multivariate_mu"]]
+        cov_observed = plotstuff()[["cov_observed"]]
+        threshold = plotstuff()[["threshold"]]
+        buffer = plotstuff()[["buffer"]]
+        meaningful_difference = plotstuff()[["meaningful_difference"]]
+        p_strict = prob_label(plotstuff()[["p_strict"]], digits = 2)
+        p_relaxed = prob_label(plotstuff()[["p_relaxed"]], digits = 2)
+
+        # Thresholds
+        tr_s <- threshold + buffer
+        ts_s <- threshold
+        tr_a <- threshold + buffer
+        ts_a <- threshold
+        tr_g <- threshold
+        ts_g <- threshold + buffer
+
+        plot3d(
+          x = x_SS,
+          type = "s", decorate = F,
+          xlim = c(40,160),
+          ylim = c(40,160),
+          zlim = c(40,160),
+          box = F,
+          xlab = NULL,
+          ylab = NULL,
+          zlab = NULL,
+          axes = F)
+
+        confidence_region_notsld <- shade3d(
+          ellipse3d(
+            cov_conditional,
+            centre = multivariate_mu,
+            smooth = T,
+            subdivide = 5),
+          col = mycolors["NotSLD"],
+          alpha = 1)
+
+        root <- currentSubscene3d()
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+
+        clipplanes3d(a = 0, b = 1, c = 0, d = -tr_s)
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+        clipplanes3d(a = -1, b = 0, c = 0, d = tr_g)
+
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+        clipplanes3d(a = 0, b = 0, c = 1, d = -tr_a)
+
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+        clipplanes3d(a = -1, b = 0, c = 1, d = (meaningful_difference - buffer))
+
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+        clipplanes3d(a = -1, b = 1, c = 0, d = (meaningful_difference - buffer))
+
+        useSubscene3d(root)
+        delFromSubscene3d(confidence_region_notsld)
+        #
+        #
+        confidence_region_sld <- shade3d(
+          ellipse3d(
+            cov_conditional,
+            centre = multivariate_mu,
+            smooth = T,
+            subdivide = 5),
+          col = mycolors["SLD"],
+          alpha = 1)
+
+        root <- currentSubscene3d()
+        #
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+
+
+        clipplanes3d(a = 0, b = -1, c = 0, d = ts_s)
+        clipplanes3d(a = 1, b = 0, c = 0, d =  -1 * ts_g)
+        clipplanes3d(a = 0, b = 0, c = -1, d = ts_a)
+        clipplanes3d(a = 1, b = 0, c = -1, d = -1 * (meaningful_difference))
+        clipplanes3d(a = 1, b = -1, c = 0, d = -1 * (meaningful_difference))
+
+        useSubscene3d(root)
+        delFromSubscene3d(confidence_region_sld)
+
+
+        confidence_region_buffer <- shade3d(
+          ellipse3d(
+            cov_conditional,
+            centre = multivariate_mu,
+            smooth = T,
+            level = .949,
+            subdivide = 5),
+          col = mycolors["Buffer"],
+          alpha = 1)
+
+        root <- currentSubscene3d()
+        #
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+
+
+        cp1 <- clipplanes3d(a = 0, b = -1, c = 0, d = tr_s)
+        cp2 <- clipplanes3d(a = 1, b = 0, c = 0, d =  -1 * tr_g)
+        cp3 <-  clipplanes3d(a = 0, b = 0, c = -1, d = tr_a)
+        cp4 <- clipplanes3d(a = 1, b = 0, c = -1, d = -1 * (meaningful_difference - buffer))
+        cp5 <- clipplanes3d(a = 1, b = -1, c = 0, d = -1 * (meaningful_difference - buffer))
+
+        useSubscene3d(root)
+        delFromSubscene3d(confidence_region_buffer)
+
+        root <- currentSubscene3d()
+        newSubscene3d("inherit", "inherit", "inherit", copyShapes = TRUE, parent = root)
+
+
+
+
+        shade3d(ellipse3d(
+          cov_observed,
+          centre = c(100, 100, 100),
+          smooth = T,
+          subdivide = 4),
+          col = NULL,
+          alpha = .05)
+
+        axis3d("x", at = seq(40, 160, 15), pos = c(NA, 38, 38), col = "gray40")
+        axis3d("x", at = seq(40, 160, 5), labels = NULL, col = "gray80", pos = c(NA, 38, 38))
+
+        axis3d("y", at = seq(40, 160, 15), pos = c(38, NA, 38), col = "gray40")
+        axis3d("y", at = seq(40, 160, 5), labels = NULL, col = "gray80", pos = c(38, NA, 38))
+
+        axis3d("z", at = seq(40, 160, 15), pos = c(38, 38, NA), col = "gray40")
+        axis3d("z", at = seq(40, 160, 5), labels = NULL, col = "gray80", pos = c(38, 38, NA))
+
+        mtext3d("General Ability", edge = "x--", at = 100, level = 2, line = 3, col = "gray30", )
+        mtext3d("Specific Ability", edge = "y--", at = 100, level = 2, line = 3, col = "gray30")
+        mtext3d("Academic Ability",edge = "z--",at = 100, level = 2, line = 3, col = "gray30")
+
+        text3d(x = mean(c(ts_g, 160)),
+               y = 45,
+               z = mean(c(ts_a, 40)),
+               texts = paste0("P(SLD Likely) = ", p_strict),
+               col = mycolors["SLD"])
+
+        text3d(x = mean(c(ts_g, 160)),
+               y = 45,
+               z = mean(c(ts_a, tr_a)),
+               texts = paste0("P(SLD Likely or Buffer) = ", p_relaxed),
+               col = mycolors["Buffer"])
+
+        as_tibble(t(x_SS)) %>%
+          spheres3d(radius = 1)
+
+        max_mb <- max(meaningful_difference, buffer)
+
+
+        # SLD-Likely Panes
+
+        tibble(G = ts_g,
+               S = c(40, ts_g - max_mb, ts_g - max_mb, 40),
+               A = c(40, 40, ts_g - max_mb, ts_g - max_mb)) %>%
+          rgl.quads(col = mycolors["SLD"], alpha = .1)
+
+
+        tibble(G = c(160,ts_s + max_mb, ts_s + max_mb, 160),
+               S = c(40, 40, ts_s, ts_s),
+               A = ts_a) %>%
+          rgl.quads(col = mycolors["SLD"], alpha = .1)
+
+        tibble(G = c(160,ts_s + max_mb, ts_s + max_mb, 160),
+               S = ts_s,
+               A = c(40, 40, ts_a, ts_a)) %>%
+          rgl.quads(col = mycolors["SLD"], alpha = .1)
+
+        tibble(G = c(ts_g, ts_s + max_mb, ts_s + max_mb, ts_g),
+               S = c(ts_g - max_mb, ts_s , ts_s, ts_g - max_mb),
+               A = c(40, 40, ts_a, ts_g - max_mb)) %>%
+          rgl.quads(col = mycolors["SLD"], alpha = .1)
+
+        tibble(G = c(ts_g, ts_s + max_mb, ts_s + max_mb, ts_g),
+               S = c(40, 40, ts_s, ts_g - max_mb),
+               A = c(ts_g - max_mb, ts_a , ts_a, ts_g - max_mb),) %>%
+          rgl.quads(col = mycolors["SLD"], alpha = .1)
+
+
+        max_mb <- max(meaningful_difference - buffer, 0)
+
+
+        # Buffer Panes
+        tibble(G = tr_g,
+               S = c(40, tr_g - max_mb, tr_g - max_mb, 40),
+               A = c(40, 40, tr_g - max_mb, tr_g - max_mb)) %>%
+          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+
+        tibble(G = c(160,tr_s + max_mb, tr_s + max_mb, 160),
+               S = c(40, 40, tr_s, tr_s),
+               A = tr_a) %>%
+          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+
+        tibble(G = c(160,tr_s + max_mb, tr_s + max_mb, 160),
+               S = tr_s,
+               A = c(40, 40, tr_a, tr_a)) %>%
+          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+
+        tibble(G = c(tr_g, tr_s + max_mb, tr_s + max_mb, tr_g),
+               S = c(tr_g - max_mb, tr_s , tr_s, tr_g - max_mb),
+               A = c(40, 40, tr_a, tr_g - max_mb)) %>%
+          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+
+        tibble(G = c(tr_g, tr_s + max_mb, tr_s + max_mb, tr_g),
+               S = c(40, 40, tr_s, tr_g - max_mb),
+               A = c(tr_g - max_mb, tr_a , tr_a, tr_g - max_mb),) %>%
+          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+
+
+
+
+
+
+        scene <- scene3d()
+
+        rgl.close()
+
+
+
+
+
+
+
+      })
+
+      rglwidget({scene})
+    })
 
 }
 ggplot2::theme_set(ggplot2::theme_minimal(base_size = 18))
