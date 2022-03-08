@@ -990,7 +990,7 @@ make_conditional_ppv_plot <- function(
                " / ",
                prob_label(pnorm(Academic, 100, 15), digits = 2),
                "<br>= ",
-               formatC(m_S.G$p /  pnorm(Academic, 100, 15), digits = 2))) +
+               formatC(m_A.G$p /  pnorm(Academic, 100, 15), digits = 2))) +
     annotate(geom = "richtext",
              hjust = 1,
              vjust = 1,
@@ -1819,12 +1819,13 @@ ui <- fixedPage(
                  plotOutput("distPlot")),
         tabPanel("2D Plot",
                  plotOutput("plotCriteria", height = "100%"),
-                 textOutput("criterianote")
+                 textOutput("criterianote") %>%
+                   tagAppendAttributes(class = 'alert alert-secondary ml-5 mr-2'),
         ),
         tabPanel("3D Plot",
                  rglwidgetOutput("rglplot", width = 700, height = 700),
                  tags$p("Use the mouse to move the plot and the scroll buttion to zoom the plot."),
-                 tags$p("Assuming multivariate normality, 95% of individuals have scores contained by the large ellipsoid. Among people with the specified observed scores, 95% of them have true scores contained by the small ellipsoid. Whatever portion (if any) of the small ellipsoid that meets SLD criteria is colored green. Any portion that is in the buffer region is blue, and any portion beyond the buffer is violet.")),
+                 tags$p("Assuming multivariate normality, 95% of individuals have observed scores contained by the large translucent ellipsoid. Among people with the specified observed scores, 95% of them have true scores contained by the small ellipsoid. Whatever portion (if any) of the small ellipsoid that ",tags$span("meets SLD criteria is colored green.", style = paste0("color:",mycolors["SLD"],";")), span(" Any portion that is in the buffer region is blue,", style = paste0("color:",mycolors["Buffer"],";")), span("and any portion beyond the buffer is violet, indicating SLD is unlikely.", style = paste0("color:",mycolors["NotSLD"],";")), class="alert alert-secondary")),
         tabPanel("Model Calculations",
                  tags$h1("Simplified Model Based on Specified Reliability and Correlation Coefficients"),
                  htmlOutput("model"),
@@ -1869,7 +1870,7 @@ ui <- fixedPage(
             ),
             p(
               r"($$\mathbf{W}=\begin{matrix}
-              \begin{matrix}\color{gray}G & \color{gray}S & \color{gray}A & \color{gray}g & \color{gray}s & \color{gray}a & \color{gray}g\color{gray}-\color{gray}a & \color{gray}g\color{gray}-\color{gray}s \phantom{-}\end{matrix}\\
+              \begin{matrix}\color{gray}G & \color{gray}S & \color{gray}A & \color{gray}g & \color{gray}s & \color{gray}a & \color{gray}g\color{gray}-\color{gray}s & \color{gray}g\color{gray}-\color{gray}a \phantom{-}\end{matrix}\\
               \begin{bmatrix}
               1&0&0&0&0&0&\phantom{-}0\phantom{-}&\phantom{-}0\\
               0&1&0&0&0&0&\phantom{-}0\phantom{-}&\phantom{-}0\\
