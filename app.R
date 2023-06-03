@@ -3,24 +3,25 @@
 # the 'Run App' button above.
 #
 
+library(conflicted)
+conflicts_prefer(dplyr::filter)
 library(shiny)
 library(tidyverse)
 library(scales)
 library(ggdist)
 library(ggtext)
 library(ragg)
-library(showtext)
 library(thematic)
 library(bslib)
-library(Cairo)
 library(viridis)
 library(patchwork)
 library(mvtnorm)
 library(condMVNorm)
 library(rgl)
+library(signs)
 
 # Options
-options(shiny.usecairo = T, # use Cairo device for better antialiasing
+options(shiny.useragg = T, # use ragg device for better antialiasing
         scipen = 999 # Do not use scientific notation
         )
 
@@ -201,6 +202,13 @@ ggtext_size <- function(base_size, ratio = 0.8) {
     ratio * base_size / 2.845276
 }
 
+# centered signed numbers
+signs_centered <- function(x, space = "\u2007", ...) {
+  x_new <- paste0(signs::signs(x, ...), ifelse(x < 0, space, ""))
+  Encoding(x_new) <- "UTF-8"
+  x_new
+}
+
 # Constants ----
 
 # SLD colors
@@ -210,6 +218,11 @@ mycolors <- c(SLD = "#43BF71",
 
 # Not sure why this is needed, but it is.
 mycolours <- mycolors
+
+
+# Base font size
+mybasefontsize <- 20
+b_size <- 14
 
 lightenedcolors <- tinter::lighten(mycolors, .15)
 
@@ -243,11 +256,10 @@ make_conditional_ppv_plot <- function(
   sigma = 15,
   mu = 100) {
 
-  # Base font size
-  b_size <- 11
+
 
   mycols <- viridis::viridis(3, begin = viridis_start, end = viridis_end, direction = -1) %>%
-    `names<-`(c("SLD-Likely", "Buffer", "SLD-Unlikely"))
+    `names<-`(c("Meeting Criteria", "Buffer", "Not Meeting Criteria"))
 
   # Observed Scores
   x_SS <- c(G = General, S = Specific, A = Academic)
@@ -256,9 +268,9 @@ make_conditional_ppv_plot <- function(
   v_true <- c("g", "s", "a")
   v_observed <- c("G", "S", "A")
   v_names <- c(v_true, v_observed)
-  decision_labels <- c("SLD-Unlikely",
+  decision_labels <- c("Meeting Criteria",
                        "Buffer",
-                       "SLD-Likely")
+                       "Not Meeting Criteria")
 
   # Thresholds
   tr_s <- threshold_s + buffer
@@ -457,10 +469,10 @@ make_conditional_ppv_plot <- function(
       160
     ),
     ymax = c(3, 4, 4, 3, 5, 5, 5) - 0.2,
-    fill = scales::alpha(c(mycols[c("SLD-Likely",
-                                    "SLD-Unlikely",
-                                    "SLD-Likely",
-                                    "SLD-Unlikely",
+    fill = scales::alpha(c(mycols[c("Meeting Criteria",
+                                    "Not Meeting Criteria",
+                                    "Meeting Criteria",
+                                    "Not Meeting Criteria",
                                     "Buffer")],
                            "gray30",
                            "gray70"),
@@ -523,13 +535,13 @@ make_conditional_ppv_plot <- function(
         fct_rev(),
       p_less_color = case_when(
         Ability == "Population" ~ "gray30",
-        Ability == "General\nAbility" ~ mycols["SLD-Unlikely"],
-        TRUE ~ mycols["SLD-Likely"]
+        Ability == "General\nAbility" ~ mycols["Not Meeting Criteria"],
+        TRUE ~ mycols["Meeting Criteria"]
       ) %>% tinter::darken(.5),
       p_more_color = case_when(
         Ability == "Population" ~ "gray70",
-        Ability == "General\nAbility" ~ mycols["SLD-Likely"],
-        TRUE ~ mycols["SLD-Unlikely"]
+        Ability == "General\nAbility" ~ mycols["Meeting Criteria"],
+        TRUE ~ mycols["Not Meeting Criteria"]
       ) %>% tinter::darken(.5),
       p_between_color = case_when(
         Ability == "Population" ~ "gray50",
@@ -550,7 +562,7 @@ make_conditional_ppv_plot <- function(
       ),
       vjust = 1.3,
       hjust = 1,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       label.padding = unit(0, "mm"),
       show.legend = F,
       family = myfont,
@@ -565,25 +577,25 @@ make_conditional_ppv_plot <- function(
       ),
       vjust = 1.3,
       hjust = 0,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       label.padding = unit(0, "mm"),
       show.legend = F,
       label.colour = NA,
       family = myfont
     ) +
     geom_hline(yintercept = 1:4 - 0.2,
-               size = 0.2,
+               linewidth = 0.2,
                color = "gray30") +
     annotate(
       x = c(rep(42, 3),
             rep(158, 3)),
       y = rep(c(1.7, 2.7, 3.7), 2),
-      label = c("SLD-Likely", "SLD-Unlikely")[c(1, 1, 2, 2, 2, 1)],
+      label = c("Meeting Criteria", "Not Meeting Criteria")[c(1, 1, 2, 2, 2, 1)],
       geom = "label",
       family = myfont,
       hjust = c(rep(0,3), rep(1,3)),
       color = mycols[c(1, 1, 3, 3, 3, 1)] %>% tinter::darken(.5),
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       label.padding = unit(0, "lines"),
       label.size = 0) +
     geom_rect(
@@ -600,17 +612,17 @@ make_conditional_ppv_plot <- function(
     stat_dist_halfeye(
       normalize = "groups",
       limits = c(40, 160),
-      aes(fill = stat(
+      aes(fill = after_stat(
         case_when(
           y == 4 & x < threshold ~ "gray30",
           y == 4 &
             x < threshold + buffer ~ mycols["Buffer"],
           y == 4 ~ "gray70",
-          (x < threshold & y != 3) ~ mycols["SLD-Likely"],
+          (x < threshold & y != 3) ~ mycols["Meeting Criteria"],
           ((x >= threshold + buffer)  &
-             y == 3) ~ mycols["SLD-Likely"],
+             y == 3) ~ mycols["Meeting Criteria"],
           (x > threshold + buffer) |
-            (x < threshold) ~ mycols["SLD-Unlikely"],
+            (x < threshold) ~ mycols["Not Meeting Criteria"],
           TRUE ~ mycols["Buffer"]
         )
       )),
@@ -630,7 +642,7 @@ make_conditional_ppv_plot <- function(
     ) +
     geom_vline(xintercept = threshold + buffer,
                color = "gray30",
-               size = 0.25) +
+               linewidth = 0.25) +
     geom_vline(xintercept = threshold) +
     scale_x_continuous(
       "Standard Scores",
@@ -642,19 +654,22 @@ make_conditional_ppv_plot <- function(
     scale_color_identity(NULL) +
     scale_fill_identity(NULL, guide = "none") +
     coord_cartesian(xlim = c(40, 160), clip = "off") +
-    theme_minimal(base_size = 18, base_family = myfont, base_line_size = .5) +
+    theme_minimal(base_size = mybasefontsize, base_family = myfont, base_line_size = .5) +
     theme(
       plot.title.position = "panel",
       plot.background = element_rect(fill = "white", color = NA),
-      plot.title = element_markdown(size = 12,
+      plot.title = element_markdown(size = b_size,
                                     color = "gray30",
                                     padding = margin(l = 2, unit = "mm")),
-      plot.subtitle = element_markdown(size = 12,
+      plot.subtitle = element_markdown(size = b_size,
                                        color = "gray30",
                                        padding = margin(l = 2, unit = "mm")),
       panel.grid.major.y = element_blank(),
-      axis.text.y = element_text(vjust = 0,lineheight = 1.2, size = 12,
-                                 hjust = 0.5)
+      axis.text.y = element_text(vjust = 0,
+                                 lineheight = 1.2,
+                                 size = b_size,
+                                 hjust = 0.5),
+      axis.text.x = element_text(size = b_size)
     ) +
     annotate(
       x = mean(c(threshold,
@@ -665,7 +680,7 @@ make_conditional_ppv_plot <- function(
       label = paste0("Buffer"),
       geom = "text",
       angle = 90,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       family = myfont
     ) +
     annotate(
@@ -676,7 +691,7 @@ make_conditional_ppv_plot <- function(
       angle = 0,
       hjust = 0,
       vjust = -0.5,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       family = myfont
     ) +
     annotate(
@@ -687,13 +702,13 @@ make_conditional_ppv_plot <- function(
       angle = 0,
       hjust = 1,
       vjust = -0.5,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       family = myfont
     ) +
     ggtitle(
       paste0(
         'Probability all true scores meet **<span style="color:',
-        mycols["SLD-Likely"],
+        mycols["Meeting Criteria"],
         '">SLD-Likely</span>** criteria',
         " = ",
         prob_label(p_strict,
@@ -703,7 +718,7 @@ make_conditional_ppv_plot <- function(
       ),
       subtitle = paste0(
         'Probability all true scores meet **<span style="color:',
-        mycols["SLD-Likely"],
+        mycols["Meeting Criteria"],
         '">SLD-Likely</span>** criteria or are in **<span style="color:',
         mycols["Buffer"],
         '">Buffer</span>**',
@@ -752,8 +767,8 @@ make_conditional_ppv_plot <- function(
       Ability = factor(Ability) %>%
         fct_inorder() %>%
         fct_rev(),
-      p_less_color = mycols["SLD-Unlikely"] %>% tinter::darken(.5),
-      p_more_color = mycols["SLD-Likely"] %>% tinter::darken(.5),
+      p_less_color = mycols["Not Meeting Criteria"] %>% tinter::darken(.5),
+      p_more_color = mycols["Meeting Criteria"] %>% tinter::darken(.5),
       p_between_color = mycols["Buffer"]
     ) %>%
     ggplot(aes(y = Ability)) +
@@ -762,12 +777,12 @@ make_conditional_ppv_plot <- function(
       x = c(rep(-58, 2),
             rep(58, 2)),
       y = rep(c(1.7, 2.7), 2),
-      label = c("SLD-Likely", "SLD-Unlikely")[c(2, 2, 1, 1)],
+      label = c("Meeting Criteria", "Not Meeting Criteria")[c(2, 2, 1, 1)],
       geom = "label",
       family = myfont,
       hjust = c(rep(0,2), rep(1,2)),
       color = mycols[c(3, 3, 1, 1)] %>% tinter::darken(.5),
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       label.padding = unit(0, "lines"),
       label.size = 0) +
     geom_richtext(
@@ -779,7 +794,7 @@ make_conditional_ppv_plot <- function(
       ),
       vjust = 1.3,
       hjust = 1,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       label.padding = unit(0, "mm"),
       show.legend = F,
       family = myfont,
@@ -794,7 +809,7 @@ make_conditional_ppv_plot <- function(
       ),
       vjust = 1.3,
       hjust = 0,
-      size = ggtext_size(16),
+      size = ggtext_size(mybasefontsize),
       label.padding = unit(0, "mm"),
       show.legend = F,
       label.colour = NA,
@@ -823,11 +838,11 @@ make_conditional_ppv_plot <- function(
     stat_dist_halfeye(
       normalize = "groups",
       limits = c(-60, 60),
-      aes(fill = stat(
+      aes(fill = after_stat(
         case_when(
-          (x >= meaningful_difference) ~ mycols["SLD-Likely"],
+          (x >= meaningful_difference) ~ mycols["Meeting Criteria"],
           (x >= meaningful_difference - buffer) ~ mycols["Buffer"],
-          TRUE ~ mycols["SLD-Unlikely"]
+          TRUE ~ mycols["Not Meeting Criteria"]
         )
       ),
       dist = dist,
@@ -838,9 +853,9 @@ make_conditional_ppv_plot <- function(
     ) +
     geom_vline(xintercept = meaningful_difference - buffer,
                color = "gray30",
-               size = 0.25) +
+               linewidth = 0.25) +
     geom_hline(yintercept = 1:2 - 0.2,
-               size = 0.2,
+               linewidth = 0.2,
                color = "gray30") +
     geom_vline(xintercept = meaningful_difference) +
     geom_point(aes(x = Score), color = "gray20") +
@@ -856,25 +871,29 @@ make_conditional_ppv_plot <- function(
       "Difference Scores",
       breaks = seq(-60, 60, 10),
       minor_breaks = seq(-60, 60, 5),
+      labels = signs_centered,
       expand = expansion(add = 2)
     ) +
     scale_y_discrete(NULL, expand = expansion(mult = .05)) +
     scale_color_identity(NULL) +
     scale_fill_identity(NULL, guide = "none") +
     coord_cartesian(xlim = c(-60, 60), clip = "off") +
-    theme_minimal(base_size = 18, base_family = myfont, base_line_size = .5) +
+    theme_minimal(base_size = mybasefontsize, base_family = myfont, base_line_size = .5) +
     theme(
       plot.title.position = "panel",
       plot.background = element_rect(fill = "white", color = NA),
-      plot.title = element_markdown(size = 15,
+      plot.title = element_markdown(size = b_size + 3,
                                     color = "gray30",
                                     padding = margin(l = 2, unit = "mm")),
-      plot.subtitle = element_markdown(size = 15,
+      plot.subtitle = element_markdown(size = b_size + 3,
                                        color = "gray30",
                                        padding = margin(l = 2, unit = "mm")),
       panel.grid.major.y = element_blank(),
-      axis.text.y = element_text(vjust = 0,lineheight = 1.2, size = 12,
-                                 hjust = 0.5)
+      axis.text.y = element_text(vjust = 0,
+                                 lineheight = 1.2,
+                                 size = b_size,
+                                 hjust = 0.5),
+      axis.text.x = element_text(size = b_size)
     )
 
 
@@ -960,6 +979,7 @@ make_conditional_ppv_plot <- function(
     annotate(geom = "richtext",
              hjust = 0,
              vjust = 1,
+             size = ggtext_size(b_size),
              x = 40,
              y = 2.95,
              label.color = NA,
@@ -979,6 +999,7 @@ make_conditional_ppv_plot <- function(
              vjust = 1,
              x = 40,
              y = 1.95,
+             size = ggtext_size(b_size),
              label.color = NA,
              label = paste0(
                "Relative Risk<br>that *A* &le; ",
@@ -996,6 +1017,7 @@ make_conditional_ppv_plot <- function(
              vjust = 1,
              x = 160,
              y = 1.95,
+             size = ggtext_size(b_size),
              label.color = NA,
              label = paste0(
                "Relative Risk<br>that *A* &le; ",
@@ -1030,7 +1052,8 @@ make_conditional_ppv_plot <- function(
                       hjust = ifelse(SS < 55, 0, ifelse(SS > 145, 1, 0.5))),
                   vjust = 0,
                   label.color = NA,
-                  fill = NA, size = ggtext_size(18),
+                  fill = NA,
+                  size = ggtext_size(mybasefontsize),
                   family = "Roboto Condensed",
                   data = . %>% filter(!is.na(SS))) +
     geom_richtext(aes(x = mu, label = eq,
@@ -1040,7 +1063,7 @@ make_conditional_ppv_plot <- function(
                   fill = NA,
                   label.margin = unit(1, "mm"),
                   lineheight = 1.5,
-                  size = ggtext_size(14),
+                  size = ggtext_size(mybasefontsize),
                   family = "Roboto Condensed") +
     scale_x_continuous(NULL, limits = c(40, 160),
                        breaks = seq(40, 160, 15),
@@ -1048,7 +1071,10 @@ make_conditional_ppv_plot <- function(
     scale_y_discrete(NULL, expand = expansion()) +
     scale_fill_identity() +
     # theme_minimal(base_size = 16, base_family = "Roboto Condensed") +
-    theme(axis.text.y = element_text(vjust = 0, hjust = 0.5 , lineheight = 1.25)) +
+    theme(axis.text.y = element_text(vjust = 0,
+                                     hjust = 0.5,
+                                     size = b_size,
+                                     lineheight = 1.25)) +
     coord_cartesian(clip = "off")
 
   # Criteria Plot ----
@@ -1090,7 +1116,7 @@ make_conditional_ppv_plot <- function(
     tibble(
       G = c(160, 160, rep(ts_g, length(seq(40, ts_s))), seq(ts_g, 160)),
       S = c(ts_s, 40, seq(40, ts_s), rep(ts_s, length(seq(ts_g, 160)))),
-      decision_o = "SLD-Likely") %>%
+      decision_o = "Meeting Criteria") %>%
       dplyr::filter(G - S >= meaningful_difference),
     tibble(
       G = c(rep(ts_g, length(seq(40, ts_s))), seq(ts_g, 160)),
@@ -1104,11 +1130,11 @@ make_conditional_ppv_plot <- function(
       dplyr::filter(G - S >= meaningful_difference - buffer),
     tibble(G = c(rep(tr_g, length(seq(40, tr_s))), seq(tr_g, 160)),
            S = c(seq(40, tr_s), rep(tr_s, length(seq(tr_g, 160)))),
-           decision_o = "SLD-Unlikely") %>%
+           decision_o = "Not Meeting Criteria") %>%
       dplyr::filter(G - S >= meaningful_difference - buffer) %>%
       add_row(G = c(160, 40, 40),
               S = c(160, 160, 40),
-              decision_o = "SLD-Unlikely")
+              decision_o = "Not Meeting Criteria")
   ) %>%
     mutate(decision_o = factor(decision_o, levels = decision_labels))
 
@@ -1123,24 +1149,28 @@ make_conditional_ppv_plot <- function(
     # geom_point(pch = 16, size = 0.2, alpha = 0.2) +
     geom_text(data = tibble(
       S = 41,
-      G = c(tr_g - buffer / 2, ts_g - buffer / 2, ts_g + buffer / 2),
-      label = (decision_labels)),
+      G = c(159, ts_g - buffer / 2, 41),
+      label = (decision_labels) |> str_replace_all(" ", "\n"),
+      vjust = c(1,.5,0)),
       size = ggtext_size(b_size),
       hjust = 0,
+      lineheight = .9,
       family = myfont,
-      aes(label = label)) +
+      aes(label = label, vjust = vjust)) +
     scale_x_continuous("Specific Ability",
                        breaks = seq(40, 160, 10),
                        expand = expansion()) +
     scale_y_continuous("General Ability",
                        breaks = seq(40, 160, 10),
                        expand = expansion()) +
-    theme_minimal(base_size = 18, base_family = myfont) +
+    theme_minimal(base_size = mybasefontsize, base_family = myfont) +
     coord_equal(xlim = c(40, 160), ylim = c(40, 160)) +
     scale_fill_viridis_d(begin = viridis_start,
-                         end = viridis_end) +
+                         end = viridis_end,
+                         direction = -1) +
     theme(legend.position = "none",
           axis.title.x = element_blank(),
+          axis.text.y = element_text(size = b_size - 1),
           axis.text.x = element_blank())
   # plot_GS
 
@@ -1150,7 +1180,7 @@ make_conditional_ppv_plot <- function(
     tibble(
       G = c(160, 160, rep(ts_g, length(seq(40, ts_a))), seq(ts_a, 160)),
       A = c(ts_a, 40, seq(40, ts_a), rep(ts_a, length(seq(ts_a, 160)))),
-      decision_o = "SLD-Likely") %>%
+      decision_o = "Meeting Criteria") %>%
       dplyr::filter(G - A >= meaningful_difference),
     tibble(
       G = c(rep(ts_g, length(seq(40, ts_a))), seq(ts_a, 160)),
@@ -1164,11 +1194,11 @@ make_conditional_ppv_plot <- function(
       dplyr::filter(G - A >= meaningful_difference - buffer),
     tibble(G = c(rep(tr_g, length(seq(40, tr_a))), seq(tr_g, 160)),
            A = c(seq(40, tr_a), rep(tr_a, length(seq(tr_g, 160)))),
-           decision_o = "SLD-Unlikely") %>%
+           decision_o = "Not Meeting Criteria") %>%
       dplyr::filter(G - A >= meaningful_difference - buffer) %>%
       add_row(G = c(160, 40, 40),
               A = c(160, 160, 40),
-              decision_o = "SLD-Unlikely")
+              decision_o = "Not Meeting Criteria")
   ) %>%
     mutate(decision_o = factor(decision_o, levels = decision_labels))
 
@@ -1183,26 +1213,30 @@ make_conditional_ppv_plot <- function(
     geom_polygon(aes(fill = decision_o), alpha = 0.3) +
     # geom_point(pch = 16, size = 0.2, alpha = 0.2) +
     geom_text(data = tibble(G = c(159, 159, 159),
-                            A = c(tr_a + buffer / 2,
+                            A = c(159,
                                   ts_a + buffer / 2,
-                                  ts_a - buffer / 2),
-                            label = (decision_labels)),
+                                  41),
+                            label = rev(decision_labels) |> str_replace_all(" ", "\n"),
+                            vjust = c(1,.5,0)),
               size = ggtext_size(b_size),
               hjust = 1,
+              lineheight = .9,
               family = myfont,
-              aes(label = label)) +
+              aes(label = label, vjust = vjust)) +
     scale_x_continuous("General Ability",
                        breaks = seq(40, 160, 10),
                        expand = expansion()) +
     scale_y_continuous("Academic Ability",
                        breaks = seq(40, 160, 10),
                        expand = expansion()) +
-    theme_minimal(base_size = 18, base_family = myfont) +
+    theme_minimal(base_size = mybasefontsize, base_family = myfont) +
     coord_equal(xlim = c(40, 160), ylim = c(40, 160)) +
     scale_fill_viridis_d(begin = viridis_start,
-                         end = viridis_end) +
+                         end = viridis_end,
+                         direction = -1) +
     theme(legend.position = "none",
           axis.title.y = element_blank(),
+          axis.text.x = element_text(size = b_size - 1),
           axis.text.y = element_blank())
 
 
@@ -1218,9 +1252,9 @@ make_conditional_ppv_plot <- function(
           tr_a,tr_a,40,40,ts_a,ts_a,
           40,ts_a,ts_a,40),
     decision_o = factor(
-      c(rep("SLD-Unlikely", 7),
+      c(rep("Not Meeting Criteria", 7),
         rep("Buffer", 6),
-        rep("SLD-Likely", 4)),
+        rep("Meeting Criteria", 4)),
       levels = decision_labels))
 
 
@@ -1236,25 +1270,30 @@ make_conditional_ppv_plot <- function(
     # geom_point(pch = 16, size = 0.2, alpha = 0.2) +
     geom_text(data = tibble(
       S = 41,
-      A = c(tr_a + buffer / 2,
+      A = c(159,
             ts_a + buffer / 2,
-            ts_a - buffer / 2),
-      label = decision_labels),
+            41),
+      label = rev(decision_labels) |> str_replace_all(" ", "\n"),
+      vjust = c(1,.5,0)),
       size = ggtext_size(b_size),
       hjust = 0,
       family = myfont,
-      aes(label = label)) +
+      lineheight = .9,
+      aes(label = label, vjust = vjust)) +
     scale_x_continuous("Specific Ability",
                        breaks = seq(40, 160, 10),
                        expand = expansion()) +
     scale_y_continuous("Academic Ability",
                        breaks = seq(40, 160, 10),
                        expand = expansion()) +
-    theme_minimal(base_size = 18, base_family = myfont) +
+    theme_minimal(base_size = mybasefontsize, base_family = myfont) +
     coord_equal(xlim = c(40, 160), ylim = c(40, 160)) +
     scale_fill_viridis_d(begin = viridis_start,
-                         end = viridis_end) +
-    theme(legend.position = "none")
+                         end = viridis_end,
+                         direction = -1) +
+    theme(legend.position = "none",
+          axis.text.y = element_text(size = b_size - 1),
+          axis.text.x = element_text(size = b_size - 1),)
 
   ## Case-Specific ----
 
@@ -1284,6 +1323,7 @@ make_conditional_ppv_plot <- function(
       "text",
       hjust = 1.1,
       vjust = 1.1,
+      size =  ggtext_size(b_size),
       family = myfont,
       x = x_SS["S"],
       y = x_SS["A"],
@@ -1314,6 +1354,7 @@ make_conditional_ppv_plot <- function(
       "text",
       hjust = -.1,
       vjust = 1.1,
+      size =  ggtext_size(b_size),
       family = myfont,
       x = x_SS["G"],
       y = x_SS["A"],
@@ -1345,6 +1386,7 @@ make_conditional_ppv_plot <- function(
       "text",
       hjust = 1.1,
       vjust = -0.1,
+      size =  ggtext_size(b_size),
       family = myfont,
       x = x_SS["S"],
       y = x_SS["G"],
@@ -1354,15 +1396,15 @@ make_conditional_ppv_plot <- function(
 
   p_case_table <-  tibble::tribble(
     ~text, ~row, ~col,          ~fill,
-    "SLD-Unlikely",   1L,   1L, "SLD-Unlikely",
-    prob_label(1 - p_relaxed, digits = 2, max_digits = 6),   1L,   2L, "SLD-Unlikely",
-    "1",   1L,   3L, "SLD-Unlikely",
+    "Not\nMeeting\nCriteria",   1L,   1L, "Not Meeting Criteria",
+    prob_label(1 - p_relaxed, digits = 2, max_digits = 6),   1L,   2L, "Not Meeting Criteria",
+    "1",   1L,   3L, "Not Meeting Criteria",
     "Buffer",   2L,   1L, "Buffer",
     prob_label(p_relaxed - p_strict, digits = 2, max_digits = 6),   2L,   2L, "Buffer",
     prob_label(p_relaxed, digits = 2, max_digits = 6),   2L,   3L, "Buffer",
-    "SLD-Likely",   3L,   1L,   "SLD-Likely",
-    prob_label(p_strict, digits = 2, max_digits = 6),   3L,   2L,   "SLD-Likely",
-    prob_label(p_strict, digits = 2, max_digits = 6),   3L,   3L,   "SLD-Likely",
+    "Meeting\nCriteria",   3L,   1L,   "Meeting Criteria",
+    prob_label(p_strict, digits = 2, max_digits = 6),   3L,   2L,   "Meeting Criteria",
+    prob_label(p_strict, digits = 2, max_digits = 6),   3L,   3L,   "Meeting Criteria",
     "Conditional\nOutcome",   4L,   1L,        "white",
     "Outcome\nProportion",   4L,   2L,        "white",
     "Cumulative\nProportion",   4L,   3L,        "white"
@@ -1386,9 +1428,9 @@ make_conditional_ppv_plot <- function(
                   fontface = fontface),
               family = myfont,
               lineheight = 0.9,
-              size = ggtext_size(13)) +
-    geom_hline(yintercept = c(70, 100, 130), color = "white", size = 0.5) +
-    geom_vline(xintercept = c(80, 120), color = "white", size = 0.5) +
+              size = ggtext_size(b_size + 3)) +
+    geom_hline(yintercept = c(70, 100, 130), color = "white", linewidth = 0.5) +
+    geom_vline(xintercept = c(80, 120), color = "white", linewidth = 0.5) +
     theme_void() +
     theme(legend.position = "none") +
     scale_fill_manual(values = c("gray85", tinter::lighten(
@@ -1622,7 +1664,7 @@ ui <- fixedPage(
     primary = scales::alpha(mycolors[1], alpha = 0.7)
   ),
   titlePanel(
-    "Accuracy of Specific Learning Disability Identification"
+    "Accuracy of a Simplied PSW Model of SLD Identification"
   ),
   sidebarLayout(
     sidebarPanel(
@@ -1802,6 +1844,7 @@ ui <- fixedPage(
                 ))
       ),
       hr(),
+      p("This app was created to demonstrate key points made in an unpublished manuscript. To make the argument cleanly and without unnecessary complications, we made our argument using a simplied PSW model that lacks the full endorsement of any of the paper's authors. We do not recommend that this app be used in practice to identify SLD in individuals."),
       "Created by ",
         tags$a(target = "_blank",
                href = "https://wjschne.github.io/",
@@ -2012,7 +2055,7 @@ server <- function(input, output) {
 
         # print(par3d()$userMatrix)
 
-        rgl.viewpoint(userMatrix = matrix(c(1,0,0,0,
+        view3d(userMatrix = matrix(c(1,0,0,0,
                                             0,0.34, -.93,0,
                                             0,.93,.34,0,
                                             0,0,0,1),
@@ -2155,13 +2198,13 @@ server <- function(input, output) {
         text3d(x = mean(c(ts_g, 160)),
                y = 45,
                z = mean(c(ts_a, 40)),
-               texts = paste0("P(SLD Likely) = ", p_strict),
+               texts = paste0("P(Meets Criteria) = ", p_strict),
                col = mycolors["SLD"])
 
         text3d(x = mean(c(ts_g, 160)),
                y = 45,
                z = mean(c(ts_a, tr_a)),
-               texts = paste0("P(SLD Likely or Buffer) = ", p_relaxed),
+               texts = paste0("P(Meets Criteria or Buffer) = ", p_relaxed),
                col = mycolors["Buffer"])
 
         as_tibble(t(x_SS)) %>%
@@ -2170,33 +2213,33 @@ server <- function(input, output) {
         max_mb <- max(meaningful_difference, buffer)
 
 
-        # SLD-Likely Panes
+        # Meeting Criteria Panes
 
         tibble(G = ts_g,
                S = c(40, ts_g - max_mb, ts_g - max_mb, 40),
                A = c(40, 40, ts_g - max_mb, ts_g - max_mb)) %>%
-          rgl.quads(col = mycolors["SLD"], alpha = .1)
+          quads3d(col = mycolors["SLD"], alpha = .1)
 
 
         tibble(G = c(160,ts_s + max_mb, ts_s + max_mb, 160),
                S = c(40, 40, ts_s, ts_s),
                A = ts_a) %>%
-          rgl.quads(col = mycolors["SLD"], alpha = .1)
+          quads3d(col = mycolors["SLD"], alpha = .1)
 
         tibble(G = c(160,ts_s + max_mb, ts_s + max_mb, 160),
                S = ts_s,
                A = c(40, 40, ts_a, ts_a)) %>%
-          rgl.quads(col = mycolors["SLD"], alpha = .1)
+          quads3d(col = mycolors["SLD"], alpha = .1)
 
         tibble(G = c(ts_g, ts_s + max_mb, ts_s + max_mb, ts_g),
                S = c(ts_g - max_mb, ts_s , ts_s, ts_g - max_mb),
                A = c(40, 40, ts_a, ts_g - max_mb)) %>%
-          rgl.quads(col = mycolors["SLD"], alpha = .1)
+          quads3d(col = mycolors["SLD"], alpha = .1)
 
         tibble(G = c(ts_g, ts_s + max_mb, ts_s + max_mb, ts_g),
                S = c(40, 40, ts_s, ts_g - max_mb),
                A = c(ts_g - max_mb, ts_a , ts_a, ts_g - max_mb),) %>%
-          rgl.quads(col = mycolors["SLD"], alpha = .1)
+          quads3d(col = mycolors["SLD"], alpha = .1)
 
 
         max_mb <- max(meaningful_difference - buffer, 0)
@@ -2206,27 +2249,27 @@ server <- function(input, output) {
         tibble(G = tr_g,
                S = c(40, tr_g - max_mb, tr_g - max_mb, 40),
                A = c(40, 40, tr_g - max_mb, tr_g - max_mb)) %>%
-          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+          quads3d(col = mycolors["Buffer"], alpha = .05)
 
         tibble(G = c(160,tr_s + max_mb, tr_s + max_mb, 160),
                S = c(40, 40, tr_s, tr_s),
                A = tr_a) %>%
-          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+          quads3d(col = mycolors["Buffer"], alpha = .05)
 
         tibble(G = c(160,tr_s + max_mb, tr_s + max_mb, 160),
                S = tr_s,
                A = c(40, 40, tr_a, tr_a)) %>%
-          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+          quads3d(col = mycolors["Buffer"], alpha = .05)
 
         tibble(G = c(tr_g, tr_s + max_mb, tr_s + max_mb, tr_g),
                S = c(tr_g - max_mb, tr_s , tr_s, tr_g - max_mb),
                A = c(40, 40, tr_a, tr_g - max_mb)) %>%
-          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+          quads3d(col = mycolors["Buffer"], alpha = .05)
 
         tibble(G = c(tr_g, tr_s + max_mb, tr_s + max_mb, tr_g),
                S = c(40, 40, tr_s, tr_g - max_mb),
                A = c(tr_g - max_mb, tr_a , tr_a, tr_g - max_mb),) %>%
-          rgl.quads(col = mycolors["Buffer"], alpha = .05)
+          quads3d(col = mycolors["Buffer"], alpha = .05)
 
 
 
@@ -2235,7 +2278,7 @@ server <- function(input, output) {
 
         scene <- scene3d()
 
-        rgl.close()
+        close3d()
 
 
 
@@ -2249,7 +2292,7 @@ server <- function(input, output) {
     })
 
 }
-ggplot2::theme_set(ggplot2::theme_minimal(base_size = 18))
+ggplot2::theme_set(ggplot2::theme_minimal(base_size = mybasefontsize))
 thematic_shiny(font = font_spec(families = "Roboto Condensed", install = T, update = T))
 
 # Run the application
