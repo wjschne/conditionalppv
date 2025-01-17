@@ -1,0 +1,127 @@
+\documentclass[tikz]{standalone}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\begin{document}
+
+
+	\usetikzlibrary{positioning, fit}
+	\usetikzlibrary{decorations.pathreplacing}
+	\usetikzlibrary{decorations.text}
+	\usetikzlibrary{arrows,shapes,backgrounds, shadows,fadings,trees, shadings}
+	\usetikzlibrary{calc}
+
+
+	\definecolor{A}{HTML}{4C2A82}
+	\definecolor{B}{HTML}{427943}
+	\definecolor{C}{HTML}{4677A8}
+
+
+	\begin{tikzpicture}[scale=1,
+		latent/.style={
+			circle,
+			very thick ,
+			draw=none,
+			minimum size=2cm,
+			inner sep=0mm,
+			font=\Huge,
+			align=center,
+			color = black!80},
+		error/.style={
+			circle,
+			inner sep=0mm,
+			minimum size=1cm,
+			font=\Large},
+		ob/.style={
+			rectangle,
+			inner sep=2mm,
+			minimum width=1.7cm,
+			align=center,
+			minimum height=1.7cm,
+			rounded corners,
+			font=\LARGE,
+			color = black!90},
+		post/.style={
+			->,
+			draw,
+			shorten >=4pt,
+			shorten <=4pt,
+			>=latex',
+			ultra thick,
+			font=\large,
+			color = black!40},
+		cov/.style={
+			<->,
+			draw=black,
+			shorten >=4pt,
+			shorten <=4pt,
+			>=latex',
+			very thick,
+			font=\Large,
+			bend left=50},
+		variance/.style={
+			<->,
+			>=latex',
+			thick,
+			draw,
+			bend left=245,
+			looseness=5,
+			shorten >=2pt,
+			shorten <=2pt,
+			font=\large},
+		upvariance/.style={
+			<->,
+			>=latex',
+			thick,
+			shorten >=2pt,
+			shorten <=2pt,
+			font=\Large,
+			bend left = 115,
+			looseness=4},
+		label/.style={
+			fill=white,
+			circle,
+			inner sep = 0mm,
+			pos=0.475,
+			text = black!60}]
+
+
+		\node[latent, fill = C!90] (g) at (120:2.5) {$g$};
+		\node[latent, fill = B!85] (s) at (240:2.5) {$s$};
+		\node[latent, fill = A!75] (a) at (0:2.5) {$a$};
+
+		\path[post] (g) to node[label]{.50} (a);
+		\path[post] (s) to node[label]{.30} (a);
+		\path[post] (g) to node[label]{.65} (s);
+
+
+		\node[ob, fill = C!90, left=of g] (og) {G};
+		\node[ob, fill = B!85, left=of s] (os) {S};
+		\node[ob, fill = A!75, right=of a] (oa) {A};
+
+
+		\node[error, fill = C!90, left=1cm of og] (eg) {$e_g$};
+		\node[error, fill = B!85, left=1cm of os] (es)  {$e_s$};
+		\node[error, fill = A!75, right=1cm of oa] (ea)  {$e_a$};
+
+		\path[post] (g) to (og);
+		\path[post] (s) to (os);
+		\path[post] (a) to (oa);
+
+		\path[post] (eg) to (og);
+		\path[post] (es) to (os);
+		\path[post] (ea) to (oa);
+
+		\path[variance, black!40] (g.75) to node[label, pos =.5]{.97} (g.105);
+		\path[variance, black!40] (a.75) to node[label, pos =.5]{.41} (a.105);
+		\path[variance, black!40] (s.255) to node[label, pos =.5]{.51} (s.285);
+
+		\path[variance, black!40] (eg.145) to node[label, pos =.5]{.03} (eg.210);
+		\path[variance, black!40] (es.145) to node[label, pos =.5]{.08} (es.210);
+		\path[variance, black!40] (ea.325) to node[label, pos =.5]{.08} (ea.35);
+
+		\node[above=0em of og, black!60] {$r_{GG}=.97$};
+		\node[above=0em of oa, black!60] {$r_{AA}=.92$};
+		\node[above=0em of os, black!60] {$r_{SS}=.92$};
+	\end{tikzpicture}
+
+\end{document}
