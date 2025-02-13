@@ -5,8 +5,8 @@ account: w-joel-schneider
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 4284652
-bundleId: 9663470
+bundleId: 9663884
 url: https://w-joel-schneider.shinyapps.io/conditionalppv/
 asMultiple: FALSE
 asStatic: FALSE
-ignoredFiles: asdf.R|generativemodel.svg|model.aux|model.pdf|model.tex|README.md|tests/shinytest.R
+ignoredFiles: .github/workflows/deploy-app.yaml|.Rbuildignore|generativemodel.svg|model.tex|README.md|tests/shinytest.R

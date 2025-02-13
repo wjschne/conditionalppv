@@ -11,7 +11,12 @@ conflicts_prefer(bslib::page)
 conflicts_prefer(viridis::viridis_pal)
 conflicts_prefer(purrr::discard)
 library(shiny)
-library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(tibble)
+library(purrr)
+library(forcats)
+library(stringr)
 library(viridisLite)
 library(scales)
 library(ggdist)
@@ -31,9 +36,9 @@ library(signs)
 library(grid)
 library(gridtext)
 library(gdtools)
-# library(showtext)
-# library(extrafont)
-# extrafont::loadfonts(quiet = TRUE)
+library(showtext)
+library(extrafont)
+extrafont::loadfonts(quiet = TRUE)
 
 # Options
 options(shiny.useragg = T, # use ragg device for better antialiasing
@@ -48,26 +53,26 @@ options(shiny.useragg = T, # use ragg device for better antialiasing
 # file.copy("www/RobotoCondensed-Italic.ttf", "~/.fonts")
 # system('fc-cache -f ~/.fonts')
 #
-# if (Sys.info()[['sysname']] == 'Linux') {
-#   dir.create('~/.fonts')
-#   fonts = c(
-#     "www/RobotoCondensed-Regular.ttf",
-#     "www/RobotoCondensed-Bold.ttf",
-#     "www/RobotoCondensed-Italic.ttf"
-#   )
-#   file.copy(fonts, "~/.fonts")
-#   system('fc-cache -f ~/.fonts')
-# }
+if (Sys.info()[['sysname']] == 'Linux') {
+  dir.create('~/.fonts')
+  fonts = c(
+    "www/RobotoCondensed-Regular.ttf",
+    "www/RobotoCondensed-Bold.ttf",
+    "www/RobotoCondensed-Italic.ttf"
+  )
+  file.copy(fonts, "~/.fonts")
+  system('fc-cache -f ~/.fonts')
+}
 
-gdtools::install_gfont_script(family = "Roboto Condensed", "debian")
+# gdtools::install_gfont_script(family = "Roboto Condensed", "debian")
 
-# font_add("Roboto Condensed",
-# regular = "www/RobotoCondensed-Regular.ttf",
-# bold = "www/RobotoCondensed-Bold.ttf",
-# italic = "www/RobotoCondensed-Italic.ttf")
+font_add("Roboto Condensed",
+regular = "www/RobotoCondensed-Regular.ttf",
+bold = "www/RobotoCondensed-Bold.ttf",
+italic = "www/RobotoCondensed-Italic.ttf")
 # font_add("RobotoCondensed-Bold", regular = "IBMPlexSans-Bold.ttf")
 # font_add("RobotoCondensed-Italic.ttf", regular = "IBMPlexSans-Medium.ttf")
-# showtext_auto()
+showtext_auto()
 
 cor_ellipse <- function(r = 0,
          mean = c(0,0),
